@@ -22,6 +22,14 @@
 #include "ipc-backend.h"
 #include "port.h"
 
+DEFINE_SPINLOCK(mq_lock);
+struct ipc_namespace init_ipc_ns = {
+	.ns.count = REFCOUNT_INIT(1),
+	.user_ns = &init_user_ns,
+	.ns.inum = PROC_IPC_INIT_INO,
+	.ns.ops = &ipcns_operations,
+};
+
 atomic_t ds_ipc_live = ATOMIC_INIT(0);
 
 static struct ucounts *inc_ipc_namespaces(struct user_namespace *ns)
@@ -64,15 +72,22 @@ static struct ipc_namespace *create_ipc_ns(struct user_namespace *user_ns,
 	if (err)
 		goto fail_put;
 
-	err = -ENOMEM;
-	if (!setup_mq_sysctls(ns))
+	err = msg_init_ns(ns);
+	if (err)
 		goto fail_put;
+	sem_init_ns(ns);
+	shm_init_ns(ns);
 
-	err = ds_ipc_ensure(ns);
-	if (err) {
-		retire_mq_sysctls(ns);
+	if (!setup_ipc_sysctls(ns)) {
+		sem_exit_ns(ns);
+		msg_exit_ns(ns);
+		shm_exit_ns(ns);
+		err = -ENOMEM;
 		goto fail_put;
 	}
+
+	__module_get(THIS_MODULE);
+	atomic_inc(&ds_ipc_live);
 	return ns;
 
 fail_put:
@@ -93,10 +108,8 @@ fail:
 struct ipc_namespace *copy_ipcs(unsigned long flags,
 	struct user_namespace *user_ns, struct ipc_namespace *ns)
 {
-	if (!(flags & CLONE_NEWIPC)) {
-		int ret = ds_ipc_ensure(ns);
-		return ret ? ERR_PTR(ret) : get_ipc_ns(ns);
-	}
+	if (!(flags & CLONE_NEWIPC))
+		return get_ipc_ns(ns ? ns : &init_ipc_ns);
 	return create_ipc_ns(user_ns, ns);
 }
 
@@ -137,20 +150,17 @@ static void free_ipc_ns(struct ipc_namespace *ns)
 	 * uses synchronize_rcu().
 	 */
 	mq_put_mnt(ns);
-	if (ns->ipc_sysctls) {
-		sem_exit_ns(ns);
-		msg_exit_ns(ns);
-		shm_exit_ns(ns);
-		retire_ipc_sysctls(ns);
-		atomic_dec(&ds_ipc_live);
-		module_put(THIS_MODULE);
-	}
-	retire_mq_sysctls(ns);
+	sem_exit_ns(ns);
+	msg_exit_ns(ns);
+	shm_exit_ns(ns);
+	retire_ipc_sysctls(ns);
 
 	dec_ipc_namespaces(ns->ucounts);
 	put_user_ns(ns->user_ns);
 	ns_free_inum(&ns->ns);
 	kfree(ns);
+	atomic_dec(&ds_ipc_live);
+	module_put(THIS_MODULE);
 }
 
 static LLIST_HEAD(free_ipc_list);
@@ -214,23 +224,20 @@ static struct ns_common *ipcns_get(struct task_struct *task)
 	return ns ? &ns->ns : NULL;
 }
 
-void ds_ipcns_put(struct ns_common *ns)
+static void ipcns_put(struct ns_common *ns)
 {
 	return put_ipc_ns(to_ipc_ns(ns));
 }
 
-int ds_ipcns_install(struct nsset *nsset, struct ns_common *new)
+static int ipcns_install(struct nsset *nsset, struct ns_common *new)
 {
 	struct nsproxy *nsproxy = nsset->nsproxy;
 	struct ipc_namespace *ns = to_ipc_ns(new);
-	int ret;
+
 	if (!ns_capable(ns->user_ns, CAP_SYS_ADMIN) ||
 	    !ns_capable(nsset->cred->user_ns, CAP_SYS_ADMIN))
 		return -EPERM;
 
-	ret = ds_ipc_ensure(ns);
-	if (ret)
-		return ret;
 	put_ipc_ns(nsproxy->ipc_ns);
 	nsproxy->ipc_ns = get_ipc_ns(ns);
 	return 0;
@@ -245,8 +252,8 @@ const struct proc_ns_operations ipcns_operations = {
 	.name		= "ipc",
 	.type		= CLONE_NEWIPC,
 	.get		= ipcns_get,
-	.put		= ds_ipcns_put,
-	.install	= ds_ipcns_install,
+	.put		= ipcns_put,
+	.install	= ipcns_install,
 	.owner		= ipcns_owner,
 };
 

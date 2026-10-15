@@ -13,6 +13,12 @@
 #define put_ipc_ns ds_put_ipc_ns
 #define free_ipcs ds_free_ipcs
 #define ipcns_operations ds_ipcns_operations
+/* These globals do not exist on a kernel built without SYSVIPC and POSIX_MQUEUE. */
+#define init_ipc_ns ds_init_ipc_ns
+#define mq_lock ds_mq_lock
+#define mq_init_ns ds_mq_init_ns
+#define mq_clear_sbinfo ds_mq_clear_sbinfo
+#define mq_put_mnt ds_mq_put_mnt
 #define copy_namespaces ds_copy_namespaces
 #define free_nsproxy ds_free_nsproxy
 #define unshare_nsproxy_namespaces ds_unshare_nsproxy_namespaces

@@ -38,6 +38,9 @@
 #include <linux/user_namespace.h>
 #include <linux/slab.h>
 #include <linux/sched/wake_q.h>
+
+/* Declared by 5.15 headers, removed from 6.1; mq_sysctl.c defines it here. */
+struct ctl_table_header *mq_register_sysctl_table(void);
 #include <linux/sched/signal.h>
 #include <linux/sched/user.h>
 

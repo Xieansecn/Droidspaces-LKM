@@ -64,61 +64,45 @@ void ds_ipc_task_release(struct task_struct *task)
 	kfree(state);
 }
 
-/* Native POSIX queues and IPC namespaces retain their original identity. */
-static DEFINE_MUTEX(ipc_init_lock);
-extern atomic_t ds_ipc_live;
-
-int ds_ipc_ensure(struct ipc_namespace *ns)
-{
-	int ret = 0;
-
-	if (smp_load_acquire(&ns->ipc_sysctls))
-		return 0;
-	mutex_lock(&ipc_init_lock);
-	if (ns->ipc_sysctls)
-		goto out;
-	ret = msg_init_ns(ns);
-	if (ret)
-		goto out;
-	sem_init_ns(ns);
-	shm_init_ns(ns);
-	if (!setup_ipc_sysctls(ns)) {
-		sem_exit_ns(ns);
-		msg_exit_ns(ns);
-		shm_exit_ns(ns);
-		ret = -ENOMEM;
-		goto out;
-	}
-	if (ns != &init_ipc_ns) {
-		__module_get(THIS_MODULE);
-		atomic_inc(&ds_ipc_live);
-	}
-out:
-	mutex_unlock(&ipc_init_lock);
-	return ret;
-}
-
 int ds_ipc_backend_init(void)
 {
 	int ret;
+
 	ds_ipc_empty_set_init();
-	ret = ds_ipc_ensure(&init_ipc_ns);
+	ret = msg_init_ns(&init_ipc_ns);
 	if (ret)
 		return ret;
-	ret = ds_ipc_proc_init();
+	sem_init_ns(&init_ipc_ns);
+	shm_init_ns(&init_ipc_ns);
+	if (!setup_ipc_sysctls(&init_ipc_ns)) {
+		ret = -ENOMEM;
+		goto fail;
+	}
+	ret = ds_mqueue_init();
 	if (ret) {
 		retire_ipc_sysctls(&init_ipc_ns);
 		init_ipc_ns.ipc_sysctls = NULL;
-		sem_exit_ns(&init_ipc_ns);
-		msg_exit_ns(&init_ipc_ns);
-		shm_exit_ns(&init_ipc_ns);
+		goto fail;
 	}
+	ret = ds_ipc_proc_init();
+	if (ret) {
+		ds_mqueue_exit();
+		retire_ipc_sysctls(&init_ipc_ns);
+		init_ipc_ns.ipc_sysctls = NULL;
+		goto fail;
+	}
+	return 0;
+fail:
+	sem_exit_ns(&init_ipc_ns);
+	msg_exit_ns(&init_ipc_ns);
+	shm_exit_ns(&init_ipc_ns);
 	return ret;
 }
 
 void ds_ipc_backend_exit(void)
 {
 	ds_ipc_proc_exit();
+	ds_mqueue_exit();
 	retire_ipc_sysctls(&init_ipc_ns);
 	init_ipc_ns.ipc_sysctls = NULL;
 	sem_exit_ns(&init_ipc_ns);

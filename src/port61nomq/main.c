@@ -70,9 +70,9 @@ static int __init ds_port_init(void)
 		return -ENODATA;
 	}
 	if (kallsyms_name_to_addr("pidns_operations") ||
-	    !kallsyms_name_to_addr("ipcns_operations") ||
-	    kallsyms_name_to_addr("msg_init_ns")) {
-		pr_err("this profile requires missing PID/SysV IPC and native IPC namespaces\n");
+	    kallsyms_name_to_addr("ipcns_operations") ||
+	    kallsyms_name_to_addr("mq_init_ns")) {
+		pr_err("this profile requires native PID and IPC namespaces to be absent\n");
 		return -EOPNOTSUPP;
 	}
 	ds_proc_exit_connector = (void *)kallsyms_name_to_addr("proc_exit_connector");

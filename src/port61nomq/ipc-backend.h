@@ -26,7 +26,6 @@ void ds_exit_shm(struct task_struct *task);
 void ds_shm_destroy_orphaned(struct ipc_namespace *ns);
 long ds_do_shmat(int shmid, char __user *addr, int flags,
 		unsigned long *result, unsigned long shmlba);
-int ds_ipc_ensure(struct ipc_namespace *ns);
 void ds_ipc_empty_set_init(void);
 int ds_ipc_backend_init(void);
 void ds_ipc_backend_exit(void);

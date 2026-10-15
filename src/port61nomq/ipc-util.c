@@ -897,9 +897,6 @@ static const struct seq_operations sysvipc_proc_seqops = {
 static int sysvipc_proc_open(struct inode *inode, struct file *file)
 {
 	struct ipc_proc_iter *iter;
-	int ret = ds_ipc_ensure(ds_current_ipc_ns());
-	if (ret)
-		return ret;
 
 	iter = __seq_open_private(file, &sysvipc_proc_seqops, sizeof(*iter));
 	if (!iter)

@@ -102,6 +102,12 @@ DECLARE_IPC_SYSCALL(shmget);
 DECLARE_IPC_SYSCALL(shmctl);
 DECLARE_IPC_SYSCALL(shmat);
 DECLARE_IPC_SYSCALL(shmdt);
+DECLARE_IPC_SYSCALL(mq_open);
+DECLARE_IPC_SYSCALL(mq_unlink);
+DECLARE_IPC_SYSCALL(mq_timedsend);
+DECLARE_IPC_SYSCALL(mq_timedreceive);
+DECLARE_IPC_SYSCALL(mq_notify);
+DECLARE_IPC_SYSCALL(mq_getsetattr);
 DECLARE_IPC_SYSCALL(reboot);
 
 
@@ -110,22 +116,13 @@ struct ds_syscall_hook {
 	unsigned int nr;
 	unsigned long replacement, saved;
 };
-#define GUARDED_SYSCALL(name) \
-static long ds_guard_##name(const struct pt_regs *regs) { \
-	int ret = ds_ipc_ensure(ds_current_ipc_ns()); \
-	return ret ? ret : __arm64_sys_ds_##name(regs); \
-}
-GUARDED_SYSCALL(msgget) GUARDED_SYSCALL(msgctl)
-GUARDED_SYSCALL(msgsnd) GUARDED_SYSCALL(msgrcv)
-GUARDED_SYSCALL(semget) GUARDED_SYSCALL(semctl)
-GUARDED_SYSCALL(semop) GUARDED_SYSCALL(semtimedop)
-GUARDED_SYSCALL(shmget) GUARDED_SYSCALL(shmctl)
-GUARDED_SYSCALL(shmat) GUARDED_SYSCALL(shmdt)
-#define IPC_SYSCALL(name) { "__arm64_sys_" #name, __NR_##name, (unsigned long)ds_guard_##name, 0 }
+#define IPC_SYSCALL(name) { "__arm64_sys_" #name, __NR_##name, (unsigned long)__arm64_sys_ds_##name, 0 }
 static struct ds_syscall_hook ipc_syscalls[] = {
 	IPC_SYSCALL(msgget), IPC_SYSCALL(msgctl), IPC_SYSCALL(msgsnd), IPC_SYSCALL(msgrcv),
 	IPC_SYSCALL(semget), IPC_SYSCALL(semctl), IPC_SYSCALL(semop), IPC_SYSCALL(semtimedop),
 	IPC_SYSCALL(shmget), IPC_SYSCALL(shmctl), IPC_SYSCALL(shmat), IPC_SYSCALL(shmdt),
+	IPC_SYSCALL(mq_open), IPC_SYSCALL(mq_unlink), IPC_SYSCALL(mq_timedsend),
+	IPC_SYSCALL(mq_timedreceive), IPC_SYSCALL(mq_notify), IPC_SYSCALL(mq_getsetattr),
 	{ "__arm64_sys_reboot", __NR_reboot, (unsigned long)__arm64_sys_ds_reboot, 0 },
 };
 static unsigned long *syscall_table;
@@ -149,13 +146,7 @@ struct ds_hook {
 
 #define HOOK(name, target) { name, (unsigned long)(target), 0, { 0 }, { 0 }, NULL }
 #define HOOK_ORIGINAL(name, target, original) { name, (unsigned long)(target), 0, { 0 }, { 0 }, original }
-extern void ds_ipcns_put(struct ns_common *);
-extern int ds_ipcns_install(struct nsset *, struct ns_common *);
 static struct ds_hook hooks[] = {
-	HOOK("copy_ipcs", ds_copy_ipcs),
-	HOOK("put_ipc_ns", ds_put_ipc_ns),
-	HOOK("ipcns_put", ds_ipcns_put),
-	HOOK("ipcns_install", ds_ipcns_install),
 	HOOK_ORIGINAL("perf_event_alloc", ds_perf_event_alloc, ds_perf_alloc_original),
 	HOOK_ORIGINAL("free_event_rcu", ds_perf_free_event_rcu, ds_perf_free_original),
 	HOOK("fuse_conn_init", ds_fuse_conn_init),
