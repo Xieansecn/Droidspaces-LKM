@@ -181,5 +181,25 @@
     "no compiled kernel code dereferences nsproxy->ipc_ns while CONFIG_IPC_NS is off, so the IPC namespace can be a module-owned struct whose lifetime the module controls",
     "the IPC syscalls exist only as weak aliases to __arm64_sys_ni_syscall, and sys_call_table is reachable, so the module can install its own handlers",
     "BTF exposes the exact 6.1 layouts of ipc_namespace, pid_namespace, pid and upid for an offline ABI comparison against the DDK build"
-  ]
+  ],
+  "cfi_implementation": {
+    "config": "CONFIG_CFI_CLANG=y, CONFIG_ARM64_BTI=y, CONFIG_SHADOW_CALL_STACK=y",
+    "evidence": "kallsyms has the KCFI runtime (cfi_handler, report_cfi_failure, cfi_break_hook) and no cfi_jt / __cfi_ / __kcfi_typeid_ symbols",
+    "conclusion": "KCFI, i.e. the flavour src/port61/hooks.c already matches; the 5.15 port needs classic .cfi_jt and would not fit this kernel",
+    "residual": "the activate path still has to be confirmed on the device"
+  },
+  "absent_symbols_tempting_for_the_mqueue_port": [
+    "alloc_inode_sb",
+    "kmem_cache_alloc_trace",
+    "__kmalloc_track_caller",
+    "mnt_idmap",
+    "nop_mnt_idmap",
+    "mnt_make_shortterm",
+    "register_sysctl_sz",
+    "__percpu_counter_init_many",
+    "percpu_counter_destroy_many",
+    "PDE_DATA"
+  ],
+  "allocator_note": "the 6.1 DDK headers inline kmem_cache_alloc()/kmalloc() to kmem_cache_alloc and __kmalloc, which the device has, while kmem_cache_alloc_trace and __kmalloc_track_caller are absent; upstream 6.1 ipc/mqueue.c uses alloc_inode_sb(), which the device does not have either, so the module keeps the 5.15 kmem_cache_alloc() form",
+  "loader_note": "export status is irrelevant here: ksud relocates non-exported symbols by name from kallsyms. The already built 6.1 module imports __register_sysctl_table and proc_alloc_inum/proc_free_inum, none of which are EXPORT_SYMBOL'd"
 }

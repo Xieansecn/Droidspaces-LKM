@@ -50,6 +50,7 @@ def main():
     project = json.loads(pathlib.Path(args.project).read_text())
     blocking = set(profile['blocking_symbol_gap']['absent_symbols'])
     blocking |= set(profile['absent_symbols_needed_by_a_self_owned_backend'])
+    blocking |= set(profile['absent_symbols_tempting_for_the_mqueue_port'])
     required = project.get('required_defined_symbols', [])
 
     imported, defined = readelf_symbols(module)

@@ -13,34 +13,126 @@
   },
   "templates": {
     "primary": {
+      "source": "src/port515",
+      "kmi": "android13-5.15",
+      "ddk_image": "ghcr.io/ylarod/ddk-min@sha256:9e68cd9fcab748584755d31ba88ef134efc938dbde17f258c2652315f6cd81cd",
+      "why": "the 5.15 VFS/sysctl call forms are the ones 6.1 still has: current_time(), kern_unmount(), mnt_userns, register_sysctl_table/__register_sysctl_table. src/port66 is newer than 6.1 in the places that matter (mnt_idmap, alloc_inode_sb, mnt_make_shortterm) and those symbols do not exist in a 6.1 kernel."
+    },
+    "cross_check": {
       "source": "src/port66",
       "kmi": "android15-6.6",
-      "ddk_image": "ghcr.io/ylarod/ddk-min@sha256:51159bc935c75a282fc65bc87e02f16bd098d1cdf55dc558c4fdd0fcf7a132e2",
-      "why": "src/port61/ORIGIN records src/port66 as its adaptation base; only mqueue.c and mq_sysctl.c are missing and the IPC files differ by a few dozen lines"
+      "why": "src/port61/ORIGIN records it as the adaptation base and it carries the clearest shape of the self-owned create_ipc_ns()/mq_* lifecycle"
     },
     "references": [
-      { "source": "src/port515", "kmi": "android13-5.15", "ddk_image": "ghcr.io/ylarod/ddk-min@sha256:9e68cd9fcab748584755d31ba88ef134efc938dbde17f258c2652315f6cd81cd" },
-      { "source": "src/port", "kmi": "android16-6.12", "ddk_image": "ghcr.io/ylarod/ddk-min@sha256:4dd088dc94b391c926cf09215e0a5958f3dfe7d8eeed3616f9041224f85b1d1a" }
+      {
+        "source": "src/port",
+        "kmi": "android16-6.12",
+        "ddk_image": "ghcr.io/ylarod/ddk-min@sha256:4dd088dc94b391c926cf09215e0a5958f3dfe7d8eeed3616f9041224f85b1d1a"
+      }
     ]
   },
   "change_list": [
-    { "file": "names.h", "action": "add", "detail": "#define init_ipc_ns ds_init_ipc_ns and #define mq_lock ds_mq_lock, exactly as src/port66/names.h does", "size": 2 },
-    { "file": "ipc.c", "action": "replace", "detail": "define init_ipc_ns and DEFINE_SPINLOCK(mq_lock), own copy_ipcs/free_ipc_ns/ipcns_operations/create_ipc_ns instead of importing them", "size": 101 },
-    { "file": "ipc-task.c", "action": "port", "detail": "module-owned init namespace handling instead of the native init_ipc_ns paths", "size": 66 },
-    { "file": "ipc_sysctl.c", "action": "port", "detail": "register the module's own ipc and mqueue sysctl trees on the module-owned namespace", "size": 17 },
-    { "file": "ipc-util.c", "action": "port", "detail": "namespace bookkeeping deltas", "size": 5 },
-    { "file": "ipc-util.h", "action": "port", "detail": "declaration deltas", "size": 4 },
-    { "file": "ipc-backend.h", "action": "port", "detail": "backend declaration deltas", "size": 4 },
-    { "file": "hooks.c", "action": "port", "detail": "drop the HOOK() entries that wrap native copy_ipcs/put_ipc_ns/ipcns_put/ipcns_install; never back-port src/port66's 6.6-only exec_task_namespaces hook", "size": 38 },
-    { "file": "exit.c", "action": "port", "detail": "release the module-owned namespace on task exit in the 6.1 exit path", "size": 14 },
-    { "file": "main.c", "action": "port", "detail": "init/exit ordering for the own backend", "size": 7 },
-    { "file": "fork.c", "action": "port", "detail": "6.1 fork path deltas only", "size": 6 },
-    { "file": "pid.c", "action": "port", "detail": "6.1 pid path deltas only", "size": 8 },
-    { "file": "sem.c", "action": "port", "detail": "6.1 sem path deltas only", "size": 8 },
-    { "file": "shm.c", "action": "port", "detail": "6.1 shm path deltas only", "size": 12 },
-    { "file": "mqueue.c", "action": "add", "detail": "from src/port66, then adapted 6.6 to 6.1 APIs (sysctl registration, ctl_table, mount/fs_context, percpu counters)", "size": 1761 },
-    { "file": "mq_sysctl.c", "action": "add", "detail": "from src/port66, then adapted 6.6 to 6.1", "size": 170 },
-    { "file": "msg.c/nsproxy.c/proc_ns.c/selftest.c", "action": "keep", "detail": "msg.c is already byte-identical to src/port66; nsproxy.c must keep the 6.1 form of copy_namespaces, not the 6.6 one" }
+    {
+      "file": "names.h",
+      "action": "add",
+      "detail": "#define init_ipc_ns ds_init_ipc_ns and #define mq_lock ds_mq_lock, exactly as src/port66/names.h does",
+      "size": 2
+    },
+    {
+      "file": "ipc.c",
+      "action": "replace",
+      "detail": "define init_ipc_ns and DEFINE_SPINLOCK(mq_lock), own copy_ipcs/free_ipc_ns/ipcns_operations/create_ipc_ns instead of importing them",
+      "size": 101
+    },
+    {
+      "file": "ipc-task.c",
+      "action": "port",
+      "detail": "module-owned init namespace handling instead of the native init_ipc_ns paths",
+      "size": 66
+    },
+    {
+      "file": "ipc_sysctl.c",
+      "action": "port",
+      "detail": "register the module's own ipc and mqueue sysctl trees on the module-owned namespace",
+      "size": 17
+    },
+    {
+      "file": "ipc-util.c",
+      "action": "port",
+      "detail": "namespace bookkeeping deltas",
+      "size": 5
+    },
+    {
+      "file": "ipc-util.h",
+      "action": "port",
+      "detail": "declaration deltas",
+      "size": 4
+    },
+    {
+      "file": "ipc-backend.h",
+      "action": "port",
+      "detail": "backend declaration deltas",
+      "size": 4
+    },
+    {
+      "file": "hooks.c",
+      "action": "port",
+      "detail": "drop the HOOK() entries that wrap native copy_ipcs/put_ipc_ns/ipcns_put/ipcns_install, add the six mq syscall slots, and keep src/port61 KCFI-style entry checks and raw branch encodings (the device kernel is KCFI, not classic CFI)",
+      "size": 38
+    },
+    {
+      "file": "exit.c",
+      "action": "port",
+      "detail": "release the module-owned namespace on task exit in the 6.1 exit path",
+      "size": 14
+    },
+    {
+      "file": "main.c",
+      "action": "port",
+      "detail": "gate on the absence of pidns_operations, ipcns_operations and any native mqueue filesystem, and on the presence of the six weak __arm64_sys_mq_* stubs",
+      "size": 7
+    },
+    {
+      "file": "fork.c",
+      "action": "port",
+      "detail": "6.1 fork path deltas only",
+      "size": 6
+    },
+    {
+      "file": "pid.c",
+      "action": "port",
+      "detail": "6.1 pid path deltas only",
+      "size": 8
+    },
+    {
+      "file": "sem.c",
+      "action": "port",
+      "detail": "6.1 sem path deltas only",
+      "size": 8
+    },
+    {
+      "file": "shm.c",
+      "action": "port",
+      "detail": "6.1 shm path deltas only",
+      "size": 12
+    },
+    {
+      "file": "mqueue.c",
+      "action": "add",
+      "detail": "from src/port515 (5.15): current_time(), kern_unmount(), mnt_userns and register_sysctl_table all exist in 6.1; do not take src/port66 text here",
+      "size": 1768
+    },
+    {
+      "file": "mq_sysctl.c",
+      "action": "add",
+      "detail": "from src/port515: one global /proc/sys/fs/mqueue table whose handlers rewrite table->data to the current ipc namespace. The per-namespace alternative needs the 3-argument __register_sysctl_table that src/port61/ipc_sysctl.c already uses; decide at M1",
+      "size": 121
+    },
+    {
+      "file": "msg.c/nsproxy.c/proc_ns.c/selftest.c",
+      "action": "keep",
+      "detail": "msg.c is already byte-identical to src/port66; nsproxy.c must keep the 6.1 form of copy_namespaces, not the 6.6 one"
+    }
   ],
   "milestones": [
     {
@@ -92,5 +184,10 @@
     "abi": "scripts/abi/compare-btf.py against the device BTF for nsproxy, ipc_namespace, pid_namespace and pid",
     "vm": "tests/vm harness on the M2 kernel",
     "device": "ksud insmod plus the namespace checks from the device profile"
-  }
+  },
+  "open_decisions": [
+    "payload selection: KMI android14-6.1 currently resolves to src/port61 for the GKI baseline and would also match this vendor profile; the installer has to pick by runtime capability check rather than by KMI alone",
+    "mqueue sysctl style: one global table (src/port515) versus a per-namespace ctl_table_set (src/port61 style)",
+    "whether the module-owned mq_init_ns/mq_clear_sbinfo/mq_put_mnt need ds_ renames to avoid clashing with a kernel that still has native POSIX mqueue (the DDK kernel does)"
+  ]
 }

@@ -12,9 +12,9 @@
 | 项目 | 评估 |
 | --- | --- |
 | 可行性 | 高。不是新设计，而是把仓库里已经存在四份的「自持后端」移植回来 |
-| 规模 | 新增约 1,930 行（`mqueue.c` + `mq_sysctl.c`）+ 约 300 行适配 |
-| 最近模板 | `src/port66`（6.6）——`src/port61/ORIGIN` 已记录 6.1 端口就是由它改编 |
-| 主要风险 | `mqueue.c` 的 6.6→6.1 API 适配；测试内核能否代表设备（DDK 内核自带原生 mqueue） |
+| 规模 | 新增约 1,890 行（`mqueue.c` + `mq_sysctl.c`）+ 约 300 行适配 |
+| 最近模板 | 后端取 `src/port515`（5.15，其 VFS/sysctl 调用形式 6.1 仍在用），`src/port66`（6.6）作为交叉参照 |
+| 主要风险 | `mqueue.c` 的 5.15→6.1 API 适配；测试内核能否代表设备（DDK 内核自带原生 mqueue） |
 | 不改动 | 不启用 `CONFIG_SYSVIPC`，因此不动 `task_struct`/kABI，这是本路线相对「重刷内核」的核心优势 |
 | 不在本次范围 | devtmpfs（`CONFIG_DEVTMPFS=n`）与 user namespace 沙箱（`CONFIG_USER_NS=n`），另立 M4 |
 
@@ -71,29 +71,84 @@ droidspaces_ns: Unknown symbol mq_put_mnt (err -2)
    `ipcns_operations`，并各自带 `mqueue.c` 与 `mq_sysctl.c`。只有
    `src/port61` 改成了复用原生对象——这正是它在厂商内核上加载失败的原因。
 
-## 3. 工作量：与最近模板的实际差距
+## 3. 工作量：与参考端口的实际差距
 
-`src/port66` 与 `src/port61` 的文件集合只差 `mqueue.c`、`mq_sysctl.c` 两个文件，
-其余同名文件的差异行数（`diff` 行计数，含上下文）：
+所有自持端口的文件集合都比 `src/port61` 多 `mqueue.c`、`mq_sysctl.c` 两个文件，
+其余同名文件的差异行数（`diff` 行计数，含上下文；左列对比 `src/port66`，右列对比
+`src/port515`）：
 
-| 文件 | p61 vs p66 | 说明 |
-| --- | --- | --- |
-| ipc.c | 101 | 自持 `init_ipc_ns`/`mq_lock`/`copy_ipcs`/`free_ipc_ns`/`ipcns_operations` |
-| ipc-task.c | 66 | 自持 init namespace 路径 |
-| ipc_sysctl.c | 17 | 注册自己的 ipc/mqueue sysctl 树 |
-| exit.c / hooks.c / nsproxy.c / main.c | 14 / 38 / 44 / 7 | 生命周期与挂钩；**nsproxy.c 的 44 行是 6.6 专属改动，不可回移** |
-| ipc-util.c/h、ipc-backend.h、names.h、fork.c、pid.c、sem.c、shm.c | 各 4–12 | 小幅适配 |
-| msg.c、proc_ns.c、selftest.c | 0 | 已完全一致 |
-| mqueue.c / mq_sysctl.c | 新增 | 1,761 + 170 行，随后做 6.6→6.1 适配 |
+| 文件 | p61 vs p66 | p61 vs p515 | 说明 |
+| --- | --- | --- | --- |
+| ipc.c | 101 | 56 | 自持 `init_ipc_ns`/`mq_lock`/`copy_ipcs`/`free_ipc_ns`/`ipcns_operations` |
+| ipc-task.c | 66 | 67 | 自持 init namespace 路径，去掉 `ds_ipc_ensure` 机器 |
+| ipc_sysctl.c | 17 | 243 | 注册自己的 ipc/mqueue sysctl 树；5.15 用老的 `register_sysctl_table` 风格 |
+| exit.c / hooks.c / nsproxy.c / main.c | 14 / 38 / 44 / 7 | 154 / 79 / 0 / 7 | 生命周期与挂钩；**nsproxy.c 的 44 行是 6.6 专属改动，不可回移**（p61 与 p515 完全一致） |
+| ipc-util.c/h、ipc-backend.h、names.h、fork.c、pid.c、sem.c、shm.c | 各 4–12 | 各 4–65 | 小幅适配 |
+| msg.c、proc_ns.c、selftest.c | 0 | 50 / 0 / 0 | `msg.c` 已是 6.x 形式，必须保留 p61 版本 |
+| mqueue.c / mq_sysctl.c | 新增 | 新增 | 1,768 + 121 行（取 p515 文本） |
 
 关键判据：`src/port66/names.h` 相对 `src/port61/names.h` **只多两行**
 （`init_ipc_ns → ds_init_ipc_ns`、`mq_lock → ds_mq_lock`），`hooks.c` 则从「包装
 原生 `copy_ipcs`/`put_ipc_ns`/`ipcns_put`/`ipcns_install`」变成「自己拥有这些
-入口」。也就是说这次移植的主体是**把已有的自持后端搬回来**，不是重新设计 IPC。
+入口」并新增六个 mq 系统调用槽位。也就是说这次移植的主体是**把已有的自持后端搬
+回来**，不是重新设计 IPC。
+
+模板为什么选 5.15 而不是 6.6：`mqueue.c` 需要能在 6.1 上编译并只引用设备存在的
+符号，而 6.6 文本用到 `mnt_idmap`、`nop_mnt_idmap`、`alloc_inode_sb`、
+`mnt_make_shortterm`（6.3–6.8 引入），设备 kallsyms 里全部缺失；5.15 文本用的
+`current_time()`、`kern_unmount()`、`mnt_userns`、`register_sysctl_table()`/
+`__register_sysctl_table()` 在设备上全部存在（见第 3.1 节实测）。
 
 完整文件级清单、里程碑与验收门禁见
 [build/port61-nomq.json](../build/port61-nomq.json)（`change_list`、`milestones`、
-`gates`）。
+`gates`、`open_decisions`）。
+
+### 3.1 符号证据（CI 实测）
+
+用 [build-port61-nomq.yml](../.github/workflows/build-port61-nomq.yml) 的
+`mode=reference` 在各自 DDK 里真实构建三份自持后端，把模块的未定义符号与设备
+kallsyms 对照：
+
+| 模板端口 | 导入符号 | 命中设备缺失的 IPC 阻塞符号 | 其余设备缺失符号 |
+| --- | --- | --- | --- |
+| `src/port515`（5.15） | 402 | **0** | 10 个，全部是该代际特有（`PDE_DATA`、`__find_vma`、`sysctl_vals_new` 等） |
+| `src/port66`（6.6） | 410 | **0** | 10 个，全部是该代际特有（`mnt_make_shortterm`、`__percpu_counter_init_many`、`register_sysctl_sz` 等） |
+| `src/port`（6.12） | 418 | **0** | 29 个，全部是该代际特有 |
+
+两点结论：自持设计本身**不依赖**设备缺失的任何 IPC/mqueue 对象；剩余差异都是内核
+代际差异，会随「在 6.1 DDK 下编译」自然收敛。差异里已经能看到具体适配点，例如
+`src/port66/ipc.c:195` 的 `mnt_make_shortterm()`（6.8 API，设备缺失）。
+
+### 3.2 5.15→6.1 的关键差异（上游源码核对 + 设备实测）
+
+对上游 v5.15 与 v6.1 的 `ipc/`、`kernel/pid*.c`、`kernel/nsproxy.c`、`fs/proc/` 逐项
+比对后，真正影响本次移植的只有下面几条，其余（`struct pid_namespace`、`struct pid`、
+`nsproxy.c`、`ns_common.h`、`ipc/Makefile`、`struct ctl_table`）在两个版本间**逐字节
+相同**：
+
+| 差异 | 6.1 要求 | 本次处理 |
+| --- | --- | --- |
+| `msg_init_ns()` | `void` → **`int`**（要处理 percpu 计数初始化失败） | `src/port61/msg.c:1307` 已是 `int` 形式，保留 port61 版本 |
+| `struct ipc_namespace` 计数 | `atomic_t msg_bytes/msg_hdrs` → `percpu_counter`；新增 `mq_set/mq_sysctls/ipc_set/ipc_sysctls` | 模块直接用 6.1 头文件里的结构；设备 BTF 实测 1272 字节、各字段偏移与模块 DWARF 一致 |
+| mqueue 挂载 | `struct mqueue_fs_context` 新增 `bool newns`，`get_tree_nodev()` 用于新建 namespace | port515 文本里已经带 `newns` 逻辑（`mqueue.c:49/436/485`），无需自造 |
+| inode 分配 | 上游 6.1 用 `alloc_inode_sb()` | **设备无此符号**，且 6.1 DDK 头文件会把 `kmem_cache_alloc()` 内联成设备存在的 `kmem_cache_alloc`，因此保留 5.15 形式 |
+| `kern_mount/kern_unmount` | 两版本都存在且导出；6.1 只把声明挪到 `<linux/mount.h>` | 视为「需补 include」的编译期小事 |
+| sysctl | `register_sysctl_table()`（全局表）与 `__register_sysctl_table()`/`setup_sysctl_set()`（按 namespace）在设备上**都存在** | 两种风格都可行，M1 再定（见 `open_decisions`） |
+| 非导出符号 | `__register_sysctl_table`、`proc_alloc_inum`、`setup_sysctl_set` 等都没有 `EXPORT_SYMBOL` | **不构成本项目的约束**：ksud/kallrecon 按 kallsyms 名字重定位，已建成的 6.1 模块正是这样导入它们的 |
+| `CLONE_NEWIPC/NEWPID` | 配置关闭时 `copy_ipcs()`/`copy_pid_ns()` 被编译成返回 `-EINVAL` 的 inline 存根；`exit_sem/exit_shm/exit_task_namespaces` 同样是空存根 | 本项目本来就不依赖内核调用模块，而是由 `hooks.c` 挂钩 `copy_namespaces`/`unshare_nsproxy_namespaces`/`do_exit` 等**调用者** |
+| `sys_call_table` | `const` 且未导出 | 模块自带地址发现与写保护绕过（`hooks.c` 里以两个 32 位半字写入，`stop_machine` 保护） |
+| 6.1 GKI 自带 mqueue | `register_filesystem("mqueue")` 在 `POSIX_MQUEUE=y` 的内核上会返回 `-EBUSY` | 必须在 init 里降级而不是失败；M2 的测试内核要从配置上关掉 `POSIX_MQUEUE`，否则测不出真正的目标场景 |
+
+### 3.3 需要一并纳入门禁的「诱人但设备没有」的符号
+
+自持后端容易顺手用上、但设备 kallsyms 里并不存在的符号（已逐个核对，已加入
+[scripts/port61-nomq-gate.py](../scripts/port61-nomq-gate.py) 的拒绝清单）：
+`alloc_inode_sb`、`kmem_cache_alloc_trace`、`__kmalloc_track_caller`、`mnt_idmap`、
+`nop_mnt_idmap`、`mnt_make_shortterm`、`register_sysctl_sz`、
+`__percpu_counter_init_many`、`percpu_counter_destroy_many`、`PDE_DATA`。
+
+
+
 
 ## 4. 外部检索：主流做法与本仓库路线的取舍
 
@@ -141,10 +196,12 @@ kABI padding 补丁（把新字段塞进 ABI 已保留的填充位）后**重新
 
 | 风险 | 说明 | 缓解 |
 | --- | --- | --- |
-| 6.6→6.1 API 适配 | `mqueue.c`/`mq_sysctl.c` 是 6.6 文本；sysctl 注册风格、`ctl_table`、挂载/`fs_context`、percpu 计数等需按上游 6.1 `ipc/mqueue.c` 核对 | M1 的编译循环 + 以上游 6.1 为参照；本文件第 3 节的差异表作为起点 |
+| 6.6→6.1 API 适配 | `mqueue.c`/`mq_sysctl.c` 是 6.6 文本；已确认至少 `src/port66/ipc.c:195` 的 `mnt_make_shortterm()`（6.8 API）在 6.1 与设备上都不存在；sysctl 注册风格、`ctl_table`、挂载/`fs_context`、percpu 计数等需按上游 6.1 `ipc/mqueue.c` 核对 | M1 的编译循环 + 以 `mode=reference` 的三份导入符号表为基线；本文件第 3 节差异表为起点 |
 | 符号重名 | 模块自持的 `mq_init_ns`/`mq_clear_sbinfo`/`mq_put_mnt` 在「自带原生 mqueue 的 DDK 内核」里同名；`names.h` 目前只重命名 `init_ipc_ns`/`mq_lock` | M1 用 `llvm-nm` 检查重复定义；必要时把这几个也改成 `ds_` 前缀 |
 | 测试内核代表性 | 见 M2 | M2 必须完成，否则 VM 通过不代表设备可用 |
-| CFI / SCS / LTO | 设备 `CFI_CLANG`、`SHADOW_CALL_STACK` 均为 y，模块自持函数指针路径需与之一致 | 沿用其它端口的既有做法；真机加载与功能测试为准 |
+| CFI / SCS / BTI | 设备 `CONFIG_CFI_CLANG=y`、`CONFIG_ARM64_BTI=y`、`CONFIG_SHADOW_CALL_STACK=y`；kallsyms 里只有 KCFI 运行时（`cfi_handler`/`report_cfi_failure`/`cfi_break_hook`），没有 `cfi_jt`/`__cfi_` | 与 `src/port61/hooks.c` 的 KCFI 匹配逻辑一致（5.15 端口的 classic `.cfi_jt` 路线不适用）；`activate=1` 仍需真机确认 |
+| 分配器/内联差异 | 若照抄上游 6.1 的 `alloc_inode_sb()` 会引入设备不存在的符号 | 已把这类符号加入门禁拒绝清单（见 3.3 节） |
+| 同一 KMI 的载荷选择 | `android14-6.1` 现指向 `src/port61`，而这个厂商画像同样匹配该 KMI | 安装器需按运行时能力（原生 `init_ipc_ns`/`mq_lock` 是否存在）而非 KMI 选择载荷；记在 `open_decisions` |
 | 真机风险 | 模块激活后挂钩核心路径，激活状态下拒绝热卸载 | 未持久化安装，重启即恢复；先在 M2 内核上跑回归 |
 | 未检索到的先例 | 尚未找到「LKM 自带 POSIX mqueue 后端」的外部先例；本仓库的 port515/66/6.12/6.18 是目前最直接的实现参考 | 继续跟踪上游与社区（见下方待办） |
 
@@ -157,5 +214,8 @@ kABI padding 补丁（把新字段塞进 ABI 已保留的填充位）后**重新
 - 空 `__versions` 段不是致命错误（「Broken toolchain. Warn once, then let it go」）：
   [kernel/module/version.c (v6.1)](https://raw.githubusercontent.com/torvalds/linux/v6.1/kernel/module/version.c)
 - 上游 6.1 `ipc/mqueue.c`、`ipc/namespace.c`、`ipc/mq_sysctl.c` 作为 M1 的对照实现
-- 本仓库内的自持后端参考：`src/port66/{ipc.c,mqueue.c,mq_sysctl.c}`、
-  `src/port515/`、`src/port/`、`src/port618/`
+- 上游 v5.15 ↔ v6.1 逐文件比对（`ipc/`、`kernel/pid*.c`、`kernel/nsproxy.c`、
+  `fs/proc/namespaces.c`、`include/linux/{ipc_namespace,pid_namespace,nsproxy}.h`、
+  `init/Kconfig`、`arch/arm64/configs/gki_defconfig`），见第 3.2 节结论
+- 本仓库内的自持后端参考：`src/port515/{ipc.c,mqueue.c,mq_sysctl.c}`（主模板）、
+  `src/port66/`、`src/port/`、`src/port618/`
