@@ -72,9 +72,38 @@ jobs:
           cat "$out/build.json"
           (cd "$out" && sha256sum droidspaces_ns.ko "droidspaces_ns-$KMI-gki.ko") | tee "$out/SHA256SUMS"
 
+      - name: Build the symbol probes
+        run: |
+          set -o pipefail
+          docker run --rm -v "$PWD:/module" -w /module "$DDK_IMAGE" \
+            make -j"$(nproc)" OUT=/module/out/probe 2>&1 | tee probe.log
+          docker run --rm -v "$PWD:/module" -w /module "$DDK_IMAGE" \
+            make -j"$(nproc)" TARGET=probe-symbol OUT=/module/out/probe-symbol 2>&1 | tee -a probe.log
+          sudo chown -R "$(id -u):$(id -g)" out/probe out/probe-symbol
+          ! grep -q 'undefined!' probe.log
+          mv probe.log out/probe/build.log
+          for ko in out/probe/droidspaces_probe.ko out/probe-symbol/ds_missing_symbol_probe.ko; do
+            readelf -h "$ko" | grep -q AArch64
+          done
+          syms=$(readelf -sW out/probe-symbol/ds_missing_symbol_probe.ko)
+          for name in init_ipc_ns mq_lock; do
+            echo "$syms" | grep -Eq "UND $name$" || { echo "probe lacks $name" >&2; exit 1; }
+          done
+          sha256sum out/probe/droidspaces_probe.ko out/probe-symbol/ds_missing_symbol_probe.ko | tee out/probe/SHA256SUMS
+
       - uses: actions/upload-artifact@v4
         with:
           name: droidspaces_ns-android14-6.1-gki
           path: out/gki/android14-6.1/
           include-hidden-files: true
+          if-no-files-found: error
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: droidspaces-symbol-probes
+          path: |
+            out/probe/build.log
+            out/probe/droidspaces_probe.ko
+            out/probe/SHA256SUMS
+            out/probe-symbol/ds_missing_symbol_probe.ko
           if-no-files-found: error

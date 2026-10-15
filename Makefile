@@ -53,6 +53,9 @@ ifeq ($(TEST_DEVTMPFS),1)
 obj-m += droidspaces_devtmpfs_fixture.o
 droidspaces_devtmpfs_fixture-y := tests/vm/devtmpfs-fixture.o
 endif
+else ifeq ($(TARGET),probe-symbol)
+obj-m := ds_missing_symbol_probe.o
+ds_missing_symbol_probe-y := tests/probe/missing-symbol-probe.c
 else
 obj-m := droidspaces_probe.o
 droidspaces_probe-y := src/probe.o $(addprefix vendor/kallrecon/,$(DEPS_LIB_OBJS))
