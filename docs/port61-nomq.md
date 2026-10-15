@@ -331,3 +331,93 @@ runtime）、该画像的载荷选择与 KernelSU 打包。
   [ShadowCallStack](https://source.android.com/docs/security/test/shadow-call-stack)
 - 备选路线（改内核重刷 + kABI padding）：
   [Goldzxcbug/Droidspaces_Kernel_patch](https://github.com/Goldzxcbug/Droidspaces_Kernel_patch)
+
+## 8. 使用与验证
+
+### 8.1 模块名与产物位置
+
+模块名（内核里的名字、`/sys/module` 下的目录名、`rmmod` 用的名字）：
+**`droidspaces_ns`**；文件名 `droidspaces_ns.ko`。
+
+| 位置 | 路径 |
+| --- | --- |
+| CI 产物 | workflow `build-port61-nomq`（`mode=target`）的 artifact `port61-nomq-target`，内含 `droidspaces_ns.ko` |
+| 本机已下载的副本 | `out/nomq/droidspaces_ns.ko`（git 忽略） |
+| 真机上正在运行的那一份 | `/data/local/tmp/ds-nomq.ko`，sha256 `1f70603e…cff2d` |
+
+⚠️ 与 `src/port61` 的 GKI 包**同名但不同物**：`build-android14-6.1-gki` 产出的
+`droidspaces_ns.ko` 在本机会因 7 个缺失符号加载失败，只有 `src/port61nomq` 的
+这一份能在缺少 `CONFIG_POSIX_MQUEUE`/`CONFIG_IPC_NS` 的内核上工作。
+
+### 8.2 重新构建
+
+GitHub Actions 上仅手动触发（`mode=target`）：
+
+```sh
+gh workflow run build-port61-nomq.yml -R Xieansecn/Droidspaces-LKM --ref main -f mode=target
+gh run watch "$(gh run list -R Xieansecn/Droidspaces-LKM --workflow build-port61-nomq.yml \
+  --limit 1 --json databaseId --jq '.[0].databaseId')"
+gh run download <run-id> -R Xieansecn/Droidspaces-LKM -n port61-nomq-target -D out/nomq
+```
+
+该模式会顺带跑设备符号门禁（`scripts/port61-nomq-gate.py`）：必须「不导入任何设备
+缺失符号」且「定义 `ds_init_ipc_ns`/`ds_mq_lock`/`ds_copy_ipcs`/`ds_ipcns_operations`」，
+否则 job 失败。
+
+### 8.3 加载命令
+
+必须在**内核态 root**（KernelSU 的 `su`）下用 ksud 加载：
+
+```sh
+su -c '/data/adb/ksud insmod /data/local/tmp/ds-nomq.ko gki=1 activate=1'
+```
+
+| 参数 | 说明 |
+| --- | --- |
+| `gki=1` | **必需**。`src/gki-target.h` 的 GKI 门禁要求：要么在构建 VM 内，要么显式 `gki=1` 且 `uname -r` 形如 `6.1.*-android14-*`。不传会被模块自己拒绝（`-EOPNOTSUPP`，dmesg 打印 `requires matching android14-6.1 with gki=1 or the build VM`） |
+| `activate=1` | 安装挂钩并激活（19 个函数入口、19 个系统调用槽、6 个 BPF 回调）。**只有激活后** `/proc/self/ns/{pid,ipc}` 才出现 |
+| `plc110_test=1` | 仅用于 PLC110/6.6 测试画像，本机不要用 |
+
+只传 `gki=1` 即「只加载不激活」：会跑自检并注册 `/proc/sysvipc/*`、
+`/proc/sys/fs/mqueue/*`、`/proc/sys/kernel/msgmax`，但不写任何内核代码补丁，
+此时可以干净 `rmmod`。
+
+### 8.4 如何确认加载成功
+
+三层验证，从快到强：
+
+```sh
+# 1) 模块态：存在 + 参数
+su -c 'ls -d /sys/module/droidspaces_ns && cat /sys/module/droidspaces_ns/parameters/activate'
+#   -> /sys/module/droidspaces_ns      activate=Y
+
+# 2) 内核日志：门禁 / 自检 / 激活
+su -c 'dmesg | grep droidspaces_ns'
+#   -> entry preflight passed: 19 functions, 19 syscalls, 6 BPF callbacks; no patches written
+#   -> PID: allocation, parent, IDR, sharing and invalid-parent checks passed
+#   -> IPC: allocation, namespace identity, owner and sharing checks passed
+#   -> experimental namespace hooks active; module stays pinned until reboot
+
+# 3) 功能：接口出现 + 真的能建命名空间
+su -c 'ls /proc/self/ns/'                      # 必须能看到 ipc / pid / pid_for_children
+su -c 'unshare -i sh -c "readlink /proc/self/ns/ipc"'   # 与初始 ipc:[4026531839] 不同的新 id
+su -c 'unshare -p -f sh -c "echo \$\$"'                 # 1（新 PID 命名空间内的 PID 1）
+su -c 'unshare -p -f unshare -p -f sh -c "echo \$\$"'   # 1（嵌套 PID 命名空间）
+su -c 'mkdir -p /dev/mqueue-ds && unshare -i sh -c \
+  "mount -t mqueue none /dev/mqueue-ds && umount /dev/mqueue-ds && echo mqueue_mount_ok"'
+```
+
+补充判据：`dmesg | grep -icE "Unable to handle kernel|kernel BUG at|Call trace"` 应为
+0；看不到 `/proc/self/ns/ipc` 就说明没激活或加载失败。
+
+### 8.5 卸载与恢复
+
+| 状态 | 卸载方式 |
+| --- | --- |
+| 只加载未激活（`gki=1`） | `su -c '/data/adb/ksu/bin/busybox rmmod droidspaces_ns'` |
+| 已激活（`activate=1`） | **无法热卸载**（`rmmod` 报 `Try again`），重启即可；模块不持久化（`/data/adb/modules` 无条目），重启后回到出厂行为 |
+
+开机自动加载需要做成 KernelSU 模块包（仓库 `kernelsu/` 里有现成脚本框架），并且要
+先解决「同一 KMI 两个画像」的载荷选择：安装器应检查内核是否已有原生
+`mq_lock`/`init_ipc_ns`/`ipcns_operations`（有 → 用 `src/port61` 的包，没有 → 用本项目的包），
+而不是只看 KMI。
