@@ -1,0 +1,96 @@
+{
+  "project": "port61-nomq",
+  "title": "Self-owned IPC namespace and POSIX mqueue backend for the android14-6.1 module",
+  "status": "M0 scaffold",
+  "device_profile": "build/device-profiles/6.1.138-android14-11.json",
+  "problem": "src/port61 reuses the native 6.1 GKI IPC namespace and POSIX message queue objects. Device kernels that ship with CONFIG_SYSVIPC=n and CONFIG_POSIX_MQUEUE=n (so CONFIG_IPC_NS is unavailable) do not export init_ipc_ns, mq_lock, mq_init_ns, mq_clear_sbinfo, mq_put_mnt, setup_mq_sysctls or retire_mq_sysctls, and the module is rejected by simplify_symbols() with -ENOENT.",
+  "solution": "Restore the self-owned IPC/mqueue design that every other port already uses (src/port515, src/port66, src/port, src/port618 all define init_ipc_ns, mq_lock, copy_ipcs, free_ipc_ns, ipcns_operations and ship their own mqueue.c/mq_sysctl.c). src/port66 is the closest template because src/port61 was derived from it.",
+  "source_dir": "src/port61nomq",
+  "build": {
+    "make": "make -j$(nproc) TARGET=namespace PORT_DIR=src/port61nomq GKI_ANDROID=android14 GKI_VERSION=6.1 OUT=/module/out/gki/android14-6.1-nomq",
+    "ddk_image": "ghcr.io/ylarod/ddk-min@sha256:1dd6ac340b627a90a4031d6d0df6b129d8cc949b139fb56032c898f023d3d5d3",
+    "ddk_tag": "android14-6.1-20260313"
+  },
+  "templates": {
+    "primary": {
+      "source": "src/port66",
+      "kmi": "android15-6.6",
+      "ddk_image": "ghcr.io/ylarod/ddk-min@sha256:51159bc935c75a282fc65bc87e02f16bd098d1cdf55dc558c4fdd0fcf7a132e2",
+      "why": "src/port61/ORIGIN records src/port66 as its adaptation base; only mqueue.c and mq_sysctl.c are missing and the IPC files differ by a few dozen lines"
+    },
+    "references": [
+      { "source": "src/port515", "kmi": "android13-5.15", "ddk_image": "ghcr.io/ylarod/ddk-min@sha256:9e68cd9fcab748584755d31ba88ef134efc938dbde17f258c2652315f6cd81cd" },
+      { "source": "src/port", "kmi": "android16-6.12", "ddk_image": "ghcr.io/ylarod/ddk-min@sha256:4dd088dc94b391c926cf09215e0a5958f3dfe7d8eeed3616f9041224f85b1d1a" }
+    ]
+  },
+  "change_list": [
+    { "file": "names.h", "action": "add", "detail": "#define init_ipc_ns ds_init_ipc_ns and #define mq_lock ds_mq_lock, exactly as src/port66/names.h does", "size": 2 },
+    { "file": "ipc.c", "action": "replace", "detail": "define init_ipc_ns and DEFINE_SPINLOCK(mq_lock), own copy_ipcs/free_ipc_ns/ipcns_operations/create_ipc_ns instead of importing them", "size": 101 },
+    { "file": "ipc-task.c", "action": "port", "detail": "module-owned init namespace handling instead of the native init_ipc_ns paths", "size": 66 },
+    { "file": "ipc_sysctl.c", "action": "port", "detail": "register the module's own ipc and mqueue sysctl trees on the module-owned namespace", "size": 17 },
+    { "file": "ipc-util.c", "action": "port", "detail": "namespace bookkeeping deltas", "size": 5 },
+    { "file": "ipc-util.h", "action": "port", "detail": "declaration deltas", "size": 4 },
+    { "file": "ipc-backend.h", "action": "port", "detail": "backend declaration deltas", "size": 4 },
+    { "file": "hooks.c", "action": "port", "detail": "drop the HOOK() entries that wrap native copy_ipcs/put_ipc_ns/ipcns_put/ipcns_install; never back-port src/port66's 6.6-only exec_task_namespaces hook", "size": 38 },
+    { "file": "exit.c", "action": "port", "detail": "release the module-owned namespace on task exit in the 6.1 exit path", "size": 14 },
+    { "file": "main.c", "action": "port", "detail": "init/exit ordering for the own backend", "size": 7 },
+    { "file": "fork.c", "action": "port", "detail": "6.1 fork path deltas only", "size": 6 },
+    { "file": "pid.c", "action": "port", "detail": "6.1 pid path deltas only", "size": 8 },
+    { "file": "sem.c", "action": "port", "detail": "6.1 sem path deltas only", "size": 8 },
+    { "file": "shm.c", "action": "port", "detail": "6.1 shm path deltas only", "size": 12 },
+    { "file": "mqueue.c", "action": "add", "detail": "from src/port66, then adapted 6.6 to 6.1 APIs (sysctl registration, ctl_table, mount/fs_context, percpu counters)", "size": 1761 },
+    { "file": "mq_sysctl.c", "action": "add", "detail": "from src/port66, then adapted 6.6 to 6.1", "size": 170 },
+    { "file": "msg.c/nsproxy.c/proc_ns.c/selftest.c", "action": "keep", "detail": "msg.c is already byte-identical to src/port66; nsproxy.c must keep the 6.1 form of copy_namespaces, not the 6.6 one" }
+  ],
+  "milestones": [
+    {
+      "id": "M1",
+      "title": "Own the IPC namespace and POSIX mqueue backend",
+      "exit_criteria": [
+        "the new target builds clean in the 6.1 DDK",
+        "the module imports none of the blocking symbols",
+        "an offline ABI comparison of ipc_namespace/pid_namespace/pid/nsproxy against the device BTF passes"
+      ]
+    },
+    {
+      "id": "M2",
+      "title": "Representative test kernel",
+      "exit_criteria": [
+        "a 6.1 test kernel built with CONFIG_SYSVIPC=n, CONFIG_POSIX_MQUEUE=n, CONFIG_PID_NS=n, CONFIG_USER_NS=n, CONFIG_DEVTMPFS=n boots in the VM harness",
+        "the repo's namespace/IPC regression suite passes on that kernel"
+      ],
+      "why": "the DDK kernel has native POSIX mqueue and IPC namespaces, so a VM run against it cannot prove the module works without them"
+    },
+    {
+      "id": "M3",
+      "title": "Device load and Droidspaces smoke test",
+      "exit_criteria": [
+        "ksud insmod succeeds on the device profile with no oops",
+        "created PID and IPC namespaces are real (ns ids differ, nested namespaces work)",
+        "Droidspaces starts a container with the module active",
+        "unload is refused while active and the device stays stable"
+      ]
+    },
+    {
+      "id": "M4",
+      "title": "devtmpfs and sandboxing track",
+      "exit_criteria": [
+        "devtmpfs is provided for a kernel with CONFIG_DEVTMPFS=n (devtmpfs_mount and devtmpfs_create_node are absent today)",
+        "the user namespace sandboxing track is assessed against CONFIG_USER_NS=n"
+      ],
+      "note": "separate workstream, tracked here because Droidspaces needs it"
+    }
+  ],
+  "gates": {
+    "blocking_symbols": "build/device-profiles/6.1.138-android14-11.json#blocking_symbol_gap.absent_symbols",
+    "required_defined_symbols": [
+      "ds_init_ipc_ns",
+      "ds_mq_lock",
+      "ds_copy_ipcs",
+      "ds_ipcns_operations"
+    ],
+    "abi": "scripts/abi/compare-btf.py against the device BTF for nsproxy, ipc_namespace, pid_namespace and pid",
+    "vm": "tests/vm harness on the M2 kernel",
+    "device": "ksud insmod plus the namespace checks from the device profile"
+  }
+}

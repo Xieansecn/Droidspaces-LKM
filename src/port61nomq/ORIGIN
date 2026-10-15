@@ -1,0 +1,56 @@
+port61-nomq: module-owned IPC namespace and POSIX mqueue backend for 6.1
+
+Status: M0 scaffold. The tree is a seeded template, not a working port. It is
+not part of build/gki-targets.json and is not shipped by any release.
+
+Provenance
+----------
+Base:            src/port61 (Android 14 / Linux 6.1), copied verbatim.
+Added backend:   src/port66/mqueue.c and src/port66/mq_sysctl.c (Android 15 /
+                 Linux 6.6), copied verbatim; the Makefile picks both up
+                 automatically through its wildcard checks.
+Everything else: still the src/port61 text, which claims the native 6.1 IPC
+                 namespace and POSIX mqueue objects.
+
+Why this target exists
+----------------------
+src/port61 assumes the 6.1 GKI baseline, where CONFIG_POSIX_MQUEUE=y and
+CONFIG_IPC_NS=y. A vendor kernel built with CONFIG_SYSVIPC=n and
+CONFIG_POSIX_MQUEUE=n has no such objects, so the module imports
+init_ipc_ns, mq_lock, mq_init_ns, mq_clear_sbinfo, mq_put_mnt,
+setup_mq_sysctls and retire_mq_sysctls, none of which exist there; the kernel
+rejects the load with -ENOENT. See
+build/device-profiles/6.1.138-android14-11.json for the recorded evidence.
+
+Every other port in this repository already owns these objects:
+src/port515, src/port66, src/port and src/port618 all define
+DEFINE_SPINLOCK(mq_lock), struct ipc_namespace init_ipc_ns, their own
+copy_ipcs/free_ipc_ns/ipcns_operations, and ship mqueue.c plus mq_sysctl.c.
+src/port66 is the closest template because src/port61/ORIGIN records it as the
+adaptation base.
+
+Work still to do (see build/port61-nomq.json for the full change list)
+---------------------------------------------------------------------
+1. names.h: add "#define init_ipc_ns ds_init_ipc_ns" and
+   "#define mq_lock ds_mq_lock", as src/port66/names.h does.
+2. ipc.c: define init_ipc_ns and mq_lock, own copy_ipcs/free_ipc_ns/
+   ipcns_operations, stop importing the native ones.
+3. ipc-task.c, ipc_sysctl.c, ipc-util.c/h, ipc-backend.h, exit.c, main.c,
+   fork.c, pid.c, sem.c, shm.c: take the src/port66 hunks that concern the
+   own backend only. Do not back-port src/port66's 6.6-only changes, in
+   particular nsproxy.c's exec_task_namespaces() and the CLONE_VM time
+   namespace handling; src/port61 keeps the 6.1 form.
+4. mqueue.c and mq_sysctl.c: adapt 6.6 APIs to 6.1 while the upstream 6.1
+   ipc/mqueue.c stays the reference.
+5. hooks.c: drop the HOOK() entries that wrap the native copy_ipcs,
+   put_ipc_ns, ipcns_put and ipcns_install.
+
+Acceptance gates
+----------------
+- the target builds clean in DDK android14-6.1-20260313,
+- the built module imports none of the blocking symbols listed in the device
+  profile (the CI gate enforces this),
+- BTF layouts for nsproxy, ipc_namespace, pid_namespace and pid match the
+  device profile,
+- the VM regression runs on a 6.1 kernel built without SYSVIPC,
+  POSIX_MQUEUE, PID_NS, USER_NS and DEVTMPFS.

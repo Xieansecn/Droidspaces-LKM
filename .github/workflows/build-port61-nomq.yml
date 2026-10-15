@@ -1,0 +1,117 @@
+name: build-port61-nomq
+
+# Manual only. Project port61-nomq gives the 6.1 module its own IPC namespace and
+# POSIX mqueue backend, so it can load on kernels built without CONFIG_SYSVIPC and
+# CONFIG_POSIX_MQUEUE (where CONFIG_IPC_NS is unavailable).
+#
+# mode=reference builds the template ports in their pinned DDKs and records the
+# kernel symbols each backend imports, which is the evidence behind
+# docs/port61-nomq.md. mode=target builds src/port61nomq and runs the device
+# symbol gate; it is expected to fail until milestone M1 lands.
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: reference (template backends) or target (src/port61nomq)
+        type: choice
+        options: [reference, target]
+        default: reference
+
+permissions:
+  contents: read
+
+jobs:
+  reference:
+    if: inputs.mode == 'reference'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - kmi: android13-5.15
+            ver: "5.15"
+            src: src/port515
+            android: android13
+            image: ghcr.io/ylarod/ddk-min@sha256:9e68cd9fcab748584755d31ba88ef134efc938dbde17f258c2652315f6cd81cd
+          - kmi: android15-6.6
+            ver: "6.6"
+            src: src/port66
+            android: android15
+            image: ghcr.io/ylarod/ddk-min@sha256:51159bc935c75a282fc65bc87e02f16bd098d1cdf55dc558c4fdd0fcf7a132e2
+          - kmi: android16-6.12
+            ver: "6.12"
+            src: src/port
+            android: android16
+            image: ghcr.io/ylarod/ddk-min@sha256:4dd088dc94b391c926cf09215e0a5958f3dfe7d8eeed3616f9041224f85b1d1a
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build ${{ matrix.src }} in its pinned DDK
+        run: |
+          set -o pipefail
+          docker run --rm -v "$PWD:/module" -w /module "${{ matrix.image }}" \
+            make -j"$(nproc)" TARGET=namespace PORT_DIR=${{ matrix.src }} \
+              GKI_ANDROID=${{ matrix.android }} GKI_VERSION=${{ matrix.ver }} \
+              OUT=/module/out/ref/${{ matrix.kmi }} 2>&1 | tee ref.log
+          sudo chown -R "$(id -u):$(id -g)" out/ref
+          mv ref.log out/ref/${{ matrix.kmi }}/build.log
+          docker run --rm -e KMI=${{ matrix.kmi }} -v "$PWD:/module" -w /module \
+            "${{ matrix.image }}" sh -euc '
+              out=/module/out/ref/$KMI
+              llvm-nm -u "$out/droidspaces_ns.ko" > "$out/imports.txt"
+              llvm-readelf -p .modinfo "$out/droidspaces_ns.ko" > "$out/modinfo.txt"
+              cp "$KDIR/include/config/kernel.release" "$out/kernel.release"
+            '
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: backend-imports-${{ matrix.kmi }}
+          path: out/ref/${{ matrix.kmi }}/
+          if-no-files-found: error
+
+  target:
+    if: inputs.mode == 'target'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      KMI: android14-6.1-nomq
+      DDK_IMAGE: ghcr.io/ylarod/ddk-min@sha256:1dd6ac340b627a90a4031d6d0df6b129d8cc949b139fb56032c898f023d3d5d3
+    steps:
+      - uses: actions/checkout@v4
+
+      - id: build
+        continue-on-error: true
+        name: Build src/port61nomq in the pinned 6.1 DDK
+        run: |
+          set -o pipefail
+          docker run --rm -v "$PWD:/module" -w /module "$DDK_IMAGE" \
+            make -j"$(nproc)" TARGET=namespace PORT_DIR=src/port61nomq \
+              GKI_ANDROID=android14 GKI_VERSION=6.1 \
+              OUT="/module/out/gki/$KMI" 2>&1 | tee target.log
+
+      - name: Collect the build log and imports
+        if: always()
+        run: |
+          sudo chown -R "$(id -u):$(id -g)" out || true
+          mkdir -p "out/gki/$KMI"
+          mv target.log "out/gki/$KMI/build.log" || true
+          docker run --rm -e KMI -v "$PWD:/module" -w /module "$DDK_IMAGE" sh -euc '
+            ko=/module/out/gki/$KMI/droidspaces_ns.ko
+            [ -f "$ko" ] || { echo "no module was built"; exit 0; }
+            llvm-nm -u "$ko" > /module/out/gki/$KMI/imports.txt
+          '
+
+      - name: Gate against the recorded device symbol gap
+        if: always()
+        run: |
+          set -eu
+          test "${{ steps.build.outcome }}" = success || { echo "gate: fail - the build did not succeed" >&2; exit 1; }
+          python3 scripts/port61-nomq-gate.py "out/gki/$KMI/droidspaces_ns.ko"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: port61-nomq-target
+          path: out/gki/android14-6.1-nomq/
+          if-no-files-found: warn

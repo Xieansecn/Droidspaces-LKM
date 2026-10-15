@@ -1,0 +1,185 @@
+{
+  "profile": "xiaomi-6.1.138-android14-11",
+  "recorded": "2026-10-15",
+  "kernel_release": "6.1.138-android14-11-g0c3d559bcd85-ab14529422",
+  "kmi": "android14-6.1",
+  "arch": "arm64",
+  "page_size": 4096,
+  "kernel_compiler": "Android clang 17.0.2 (r487747c), LLD, +pgo +bolt +lto",
+  "module_loader": {
+    "manager": "KernelSU (me.weishu.kernelsu)",
+    "ksud": "3.3.1 (uapi: 5)",
+    "notes": "ksud rewrites vermagic and relocates non-exported symbols via kallsyms; it does not zero unresolvable symbols"
+  },
+  "config_off": [
+    "CONFIG_SYSVIPC",
+    "CONFIG_POSIX_MQUEUE",
+    "CONFIG_POSIX_MQUEUE_SYSCTL",
+    "CONFIG_PID_NS",
+    "CONFIG_USER_NS",
+    "CONFIG_DEVTMPFS",
+    "CONFIG_CGROUP_PIDS",
+    "CONFIG_CGROUP_DEVICE",
+    "CONFIG_TMPFS_XATTR"
+  ],
+  "config_unavailable": [
+    {
+      "symbol": "CONFIG_IPC_NS",
+      "reason": "Kconfig dependency (SYSVIPC / POSIX_MQUEUE) is not satisfied, so the symbol is not offered at all"
+    }
+  ],
+  "config_on": [
+    "CONFIG_NAMESPACES",
+    "CONFIG_UTS_NS",
+    "CONFIG_NET_NS",
+    "CONFIG_MODVERSIONS",
+    "CONFIG_MODULE_UNLOAD",
+    "CONFIG_MODULE_SIG (no FORCE)",
+    "CONFIG_DEBUG_INFO_BTF",
+    "CONFIG_CFI_CLANG",
+    "CONFIG_SHADOW_CALL_STACK",
+    "CONFIG_RANDOMIZE_BASE",
+    "CONFIG_KALLSYMS",
+    "CONFIG_KALLSYMS_ALL",
+    "CONFIG_ARM64_4K_PAGES",
+    "CONFIG_SMP",
+    "CONFIG_PREEMPT",
+    "CONFIG_FUSE_FS",
+    "CONFIG_TMPFS"
+  ],
+  "blocking_symbol_gap": {
+    "module": "droidspaces_ns-android14-6.1-gki.ko (KMI android14-6.1, built in DDK android14-6.1-20260313)",
+    "absent_symbols": [
+      "init_ipc_ns",
+      "mq_lock",
+      "mq_init_ns",
+      "mq_put_mnt",
+      "mq_clear_sbinfo",
+      "setup_mq_sysctls",
+      "retire_mq_sysctls"
+    ],
+    "impact": "kernel/module/main.c simplify_symbols() rejects any non-weak undefined symbol with -ENOENT, so the module cannot load",
+    "evidence": {
+      "command": "ksud insmod droidspaces_ns-android14-6.1-gki.ko gki=1 activate=1",
+      "exit_status": 1,
+      "dmesg": [
+        "droidspaces_ns: Unknown symbol mq_init_ns (err -2)",
+        "droidspaces_ns: Unknown symbol setup_mq_sysctls (err -2)",
+        "droidspaces_ns: Unknown symbol retire_mq_sysctls (err -2)",
+        "droidspaces_ns: Unknown symbol mq_clear_sbinfo (err -2)",
+        "droidspaces_ns: Unknown symbol mq_lock (err -2)",
+        "droidspaces_ns: Unknown symbol init_ipc_ns (err -2)",
+        "droidspaces_ns: Unknown symbol mq_put_mnt (err -2)"
+      ],
+      "module_state_after": "/sys/module/droidspaces_ns absent, no oops (panic_on_oops=1 not triggered), no persistent change"
+    }
+  },
+  "loader_probe": {
+    "module": "droidspaces_probe.ko (src/probe.c, read-only KallRecon probe)",
+    "result": "loaded and unloaded cleanly via ksud, exit 0",
+    "kallrecon": "symbols=101742 layout=1",
+    "symbol_report": {
+      "copy_namespaces": "present",
+      "copy_pid_ns": "not found (module provides it)",
+      "copy_ipcs": "not found (module must provide it)",
+      "free_ipc_ns": "not found (module must provide it)",
+      "init_ipc_ns": "not found",
+      "ipcns_operations": "not found (module must provide it)",
+      "pidns_operations": "not found (module provides it)",
+      "devtmpfs_mount": "not found"
+    }
+  },
+  "absent_symbols_needed_by_a_self_owned_backend": [
+    "init_ipc_ns",
+    "copy_ipcs",
+    "free_ipc_ns",
+    "ipcns_operations",
+    "mq_lock",
+    "mq_init_ns",
+    "mq_clear_sbinfo",
+    "mq_put_mnt",
+    "setup_mq_sysctls",
+    "retire_mq_sysctls",
+    "mq_create_mount",
+    "mqueue_fs_type",
+    "create_pid_namespace",
+    "pidns_operations",
+    "get_pid_ns",
+    "put_pid_ns",
+    "devtmpfs_mount",
+    "devtmpfs_create_node",
+    "create_user_ns",
+    "register_ipcns_notifier"
+  ],
+  "present_symbols_the_backend_can_rely_on": [
+    "nsproxy.ipc_ns / nsproxy.pid_ns_for_children (fields exist)",
+    "proc_alloc_inum",
+    "proc_free_inum",
+    "register_sysctl",
+    "unregister_sysctl_table",
+    "kern_mount",
+    "kern_unmount",
+    "register_filesystem",
+    "unregister_filesystem",
+    "idr_alloc",
+    "ida_alloc_range",
+    "kmem_cache_create_usercopy",
+    "percpu_counter_add_batch",
+    "security_ipc_permission",
+    "sys_call_table",
+    "__arm64_sys_ni_syscall",
+    "__arm64_sys_mq_open / __arm64_sys_msgget / __arm64_sys_semget / __arm64_sys_shmget (weak aliases to the ENOSYS stub)",
+    "init_pid_ns",
+    "find_pid_ns",
+    "task_active_pid_ns",
+    "copy_namespaces",
+    "init_user_ns"
+  ],
+  "btf_layouts": {
+    "source": "/sys/kernel/btf/vmlinux (5638518 bytes, 130651 types, read via the kernel's BTF)",
+    "nsproxy": {
+      "size": 72,
+      "members": {
+        "count": 0,
+        "uts_ns": 8,
+        "ipc_ns": 16,
+        "mnt_ns": 24,
+        "pid_ns_for_children": 32,
+        "net_ns": 40,
+        "time_ns": 48,
+        "time_ns_for_children": 56,
+        "cgroup_ns": 64
+      }
+    },
+    "ipc_namespace": {
+      "size": 1272,
+      "note": "full 6.1 definition is present in BTF even though the kernel has no IPC_NS code; mq_mnt at 984, mq_set at 1016, mq_sysctls at 1112, ipc_set at 1120, ipc_sysctls at 1216, ns at 1248"
+    },
+    "pid_namespace": {
+      "size": 128,
+      "ns_common_offset": 104
+    },
+    "pid": {
+      "size": 112,
+      "numbers_offset": 96
+    },
+    "upid": {
+      "size": 16
+    },
+    "absent_types": [
+      "msg_queue",
+      "sem_array",
+      "shmid_kernel",
+      "mqueue_inode_info",
+      "sem_undo_list",
+      "sysv_sem",
+      "sysv_shm"
+    ]
+  },
+  "why_the_port_is_feasible": [
+    "struct nsproxy keeps the ipc_ns and pid_ns_for_children fields and its layout is config independent, so module-owned namespace objects can be published there",
+    "no compiled kernel code dereferences nsproxy->ipc_ns while CONFIG_IPC_NS is off, so the IPC namespace can be a module-owned struct whose lifetime the module controls",
+    "the IPC syscalls exist only as weak aliases to __arm64_sys_ni_syscall, and sys_call_table is reachable, so the module can install its own handlers",
+    "BTF exposes the exact 6.1 layouts of ipc_namespace, pid_namespace, pid and upid for an offline ABI comparison against the DDK build"
+  ]
+}
