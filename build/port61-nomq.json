@@ -1,7 +1,7 @@
 {
   "project": "port61-nomq",
   "title": "Self-owned IPC namespace and POSIX mqueue backend for the android14-6.1 module",
-  "status": "M0 scaffold",
+  "status": "M1 complete, M3 partially validated on hardware",
   "device_profile": "build/device-profiles/6.1.138-android14-11.json",
   "problem": "src/port61 reuses the native 6.1 GKI IPC namespace and POSIX message queue objects. Device kernels that ship with CONFIG_SYSVIPC=n and CONFIG_POSIX_MQUEUE=n (so CONFIG_IPC_NS is unavailable) do not export init_ipc_ns, mq_lock, mq_init_ns, mq_clear_sbinfo, mq_put_mnt, setup_mq_sysctls or retire_mq_sysctls, and the module is rejected by simplify_symbols() with -ENOENT.",
   "solution": "Restore the self-owned IPC/mqueue design that every other port already uses (src/port515, src/port66, src/port, src/port618 all define init_ipc_ns, mq_lock, copy_ipcs, free_ipc_ns, ipcns_operations and ship their own mqueue.c/mq_sysctl.c). src/port66 is the closest template because src/port61 was derived from it.",
@@ -144,7 +144,13 @@
         "the new target builds clean in the 6.1 DDK",
         "the module imports none of the blocking symbols",
         "an offline ABI comparison of ipc_namespace/pid_namespace/pid/nsproxy against the device BTF passes"
-      ]
+      ],
+      "status": "complete",
+      "evidence": {
+        "build": "https://github.com/Xieansecn/Droidspaces-LKM/actions/runs/38737237821",
+        "gate": "pass (imports=409, defined=476, no blocking symbol)",
+        "device": "build/device-profiles/6.1.138-android14-11.json#m1_device_validation"
+      }
     },
     {
       "id": "M2",
@@ -163,6 +169,12 @@
         "created PID and IPC namespaces are real (ns ids differ, nested namespaces work)",
         "Droidspaces starts a container with the module active",
         "unload is refused while active and the device stays stable"
+      ],
+      "status": "load, activate and namespace/mqueue functionality verified on hardware",
+      "remaining": [
+        "start an actual Droidspaces container (needs the app-side runtime, not installed on this device)",
+        "payload selection and KernelSU packaging for this profile",
+        "confirm refusal of hot-unload while active"
       ]
     },
     {

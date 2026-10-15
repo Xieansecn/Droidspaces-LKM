@@ -271,5 +271,33 @@
       "ns_alloc_inum",
       "ns_free_inum"
     ]
+  },
+  "m1_device_validation": {
+    "date": "2026-10-15",
+    "module": "src/port61nomq, built by build-port61-nomq.yml mode=target",
+    "module_sha256": "1f70603e34dd89beb4c006ab53226efba9c4035027f96c3c425e70a5c89cff2d",
+    "build_run": "https://github.com/Xieansecn/Droidspaces-LKM/actions/runs/38737237821",
+    "gate": "pass: imports=409 defined=476, no blocking symbol imported, ds_init_ipc_ns/ds_mq_lock/ds_copy_ipcs/ds_ipcns_operations defined",
+    "import_check": "all 409 imports resolve in this device kernel (0 missing)",
+    "load": "ksud insmod gki=1 -> exit 0, /sys/module/droidspaces_ns present, gki=Y activate=N",
+    "load_without_gki": "rejected by the module itself with -EOPNOTSUPP, as designed",
+    "activate": "ksud insmod gki=1 activate=1 -> activate=Y, dmesg: 'experimental namespace hooks active; module stays pinned until reboot'",
+    "selftests": [
+      "entry preflight passed: 19 functions, 19 syscalls, 6 BPF callbacks; no patches written",
+      "PID: allocation, parent, IDR, sharing and invalid-parent checks passed",
+      "IPC: allocation, namespace identity, owner and sharing checks passed",
+      "PID/IPC: deferred destruction finished, no live namespaces",
+      "namespace core selftests passed; syscall hooks are not installed"
+    ],
+    "functional": {
+      "ipc_namespace": "unshare -i -> ipc:[4026535514], init is ipc:[4026531839]",
+      "pid_namespace": "unshare -p -f -> PID 1 inside, new pid namespace id",
+      "nested_pid_namespace": "unshare -p -f unshare -p -f -> PID 1, id [4026535515]",
+      "ipc_and_pid_together": "unshare -i -p -f -> works",
+      "posix_mqueue": "mount -t mqueue none /dev/mqueue-ds succeeded inside a new IPC namespace",
+      "proc_interfaces": "/proc/self/ns/{ipc,pid,pid_for_children}, /proc/sysvipc/{msg,sem,shm}, /proc/sys/fs/mqueue/* and /proc/sys/kernel/msgmax appear once the module is loaded",
+      "clean_unload": "the inactive module rmmod-ed cleanly (exit 0)"
+    },
+    "state": "the activated module is pinned until reboot; nothing is persisted (no /data/adb/modules entry), so a reboot restores stock behaviour"
   }
 }

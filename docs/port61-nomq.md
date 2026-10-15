@@ -250,6 +250,42 @@ note: did you mean '__register_sysctl_table'?   (include/linux/sysctl.h:221)
 （`mq_register_sysctl_table()` 在 6.1 已被 `setup_mq_sysctls()`/`__register_sysctl_table()`
 取代），再处理符号门禁列出的阻塞项。门禁与构建日志都随该 run 的 artifact 保留。
 
+### M1 完成 + 真机验证（2026-10-15）
+
+M1 的实际改动比预估更小：`src/port61nomq` 只改了 9 个文件、新增 2 个
+（`names.h` 增加 5 个自持符号改名；`ipc.c` 自己定义 `init_ipc_ns`/`mq_lock` 并拥有
+`copy_ipcs`/`free_ipc_ns`/`ipcns_operations`；`ipc-task.c` 去掉 `ds_ipc_ensure` 机器、
+改由 `ds_mqueue_init/exit` 起停队列后端；`hooks.c` 去掉 4 个原生 IPC 命名空间挂钩、
+新增 6 个 mq 系统调用槽位并把守护包装改为直接替换；`main.c` 门禁改为要求原生 IPC
+命名空间缺失；`mqueue.c` 补一处 6.1 已删除的声明）。CI 一次通过：
+
+```text
+run 38737237821  imports=409 defined=476 blocking_list=36
+gate: pass - the module neither imports a blocking symbol nor misses a backend symbol
+```
+
+409 个导入符号在本机 kallsyms 中**全部存在**。随后在 6.1.138 真机上：
+
+| 步骤 | 结果 |
+| --- | --- |
+| `ksud insmod …`（不带 `gki=1`） | 模块自身门禁拒绝，`-EOPNOTSUPP`，未加载（设计如此） |
+| `ksud insmod … gki=1` | **加载成功**，自检全过：`entry preflight passed: 19 functions, 19 syscalls, 6 BPF callbacks`、`PID/IPC … checks passed` |
+| 未激活时卸载 | `rmmod` 干净退出 |
+| `ksud insmod … gki=1 activate=1` | `activate=Y`，`experimental namespace hooks active; module stays pinned until reboot` |
+| `/proc/self/ns/` | 出现 `ipc`、`pid`、`pid_for_children`（此前只有 cgroup/mnt/net/time/uts） |
+| `unshare -i` | `ipc:[4026535514]`，与初始 `ipc:[4026531839]` 不同 |
+| `unshare -p -f` | 内部 PID = **1**，新的 pid namespace |
+| 嵌套 `unshare -p -f unshare -p -f` | 内部 PID = 1，再次得到新 id `[4026535515]` |
+| `unshare -i -p -f` | 同时创建 IPC + PID namespace 正常 |
+| `mount -t mqueue none /dev/mqueue-ds`（在新 IPC 命名空间内） | **挂载成功**，自持 POSIX mqueue 后端可用 |
+| `/proc/sysvipc/{msg,sem,shm}`、`/proc/sys/fs/mqueue/*`、`/proc/sys/kernel/msgmax` | 加载后出现 |
+
+运行中的模块 sha256 为 `1f70603e…cff2d`，与 CI artifact 一致。注意事项：激活后的
+模块**在重启前无法热卸载**（模块自身设计），且没有持久化（`/data/adb/modules` 无条目），
+重启即恢复出厂行为。仍未完成的是：真正的 Droidspaces 容器启动（本机未安装配套
+runtime）、该画像的载荷选择与 KernelSU 打包。
+
+
 
 ## 6. 风险与未决问题
 
