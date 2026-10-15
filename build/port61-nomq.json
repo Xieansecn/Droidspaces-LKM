@@ -42,7 +42,8 @@
       "file": "ipc.c",
       "action": "replace",
       "detail": "define init_ipc_ns and DEFINE_SPINLOCK(mq_lock), own copy_ipcs/free_ipc_ns/ipcns_operations/create_ipc_ns instead of importing them",
-      "size": 101
+      "size": 101,
+      "note": "src/port66/ipc.c:195 uses mnt_make_shortterm() (6.8, absent on the device); src/port515 uses kern_unmount() directly"
     },
     {
       "file": "ipc-task.c",
@@ -126,7 +127,8 @@
       "file": "mq_sysctl.c",
       "action": "add",
       "detail": "from src/port515: one global /proc/sys/fs/mqueue table whose handlers rewrite table->data to the current ipc namespace. The per-namespace alternative needs the 3-argument __register_sysctl_table that src/port61/ipc_sysctl.c already uses; decide at M1",
-      "size": 121
+      "size": 121,
+      "blocker_at_m0": "mqueue.c:1735 calls mq_register_sysctl_table(), removed in 6.1: replace with setup_mq_sysctls()/__register_sysctl_table(&ns->mq_set, \"fs/mqueue\", tbl)"
     },
     {
       "file": "msg.c/nsproxy.c/proc_ns.c/selftest.c",
@@ -189,5 +191,10 @@
     "payload selection: KMI android14-6.1 currently resolves to src/port61 for the GKI baseline and would also match this vendor profile; the installer has to pick by runtime capability check rather than by KMI alone",
     "mqueue sysctl style: one global table (src/port515) versus a per-namespace ctl_table_set (src/port61 style)",
     "whether the module-owned mq_init_ns/mq_clear_sbinfo/mq_put_mnt need ds_ renames to avoid clashing with a kernel that still has native POSIX mqueue (the DDK kernel does)"
-  ]
+  ],
+  "m0_evidence": {
+    "target_run": "https://github.com/Xieansecn/Droidspaces-LKM/actions/runs/38723856630",
+    "result": "one compile error: mq_register_sysctl_table undeclared in 6.1 (mqueue.c:1735); gate then reports the blocking imports",
+    "reference_run": "https://github.com/Xieansecn/Droidspaces-LKM/actions/runs/38722274158"
+  }
 }

@@ -192,6 +192,21 @@ kABI padding 补丁（把新字段塞进 ABI 已保留的填充位）后**重新
   可嵌套）、Droidspaces 能起来一个容器、激活后拒绝热卸载且设备稳定。
 - **M4 devtmpfs 与沙箱**：另立工作流（`CONFIG_DEVTMPFS=n`、`CONFIG_USER_NS=n`）。
 
+### M0 实测（`mode=target`，run 38723856630）
+
+把 `src/port61` 与 `src/port515` 的 `mqueue.c`/`mq_sysctl.c` 直接放进 6.1 DDK 编译，
+结果只有一处编译错误，且正是 3.2 节预测的差异：
+
+```text
+src/port61nomq/mqueue.c:1735: error: call to undeclared function 'mq_register_sysctl_table'
+note: did you mean '__register_sysctl_table'?   (include/linux/sysctl.h:221)
+```
+
+也就是说自持后端在 6.1 上的适配起点很窄：先按 6.1 的 sysctl 注册方式重写这一处
+（`mq_register_sysctl_table()` 在 6.1 已被 `setup_mq_sysctls()`/`__register_sysctl_table()`
+取代），再处理符号门禁列出的阻塞项。门禁与构建日志都随该 run 的 artifact 保留。
+
+
 ## 6. 风险与未决问题
 
 | 风险 | 说明 | 缓解 |
