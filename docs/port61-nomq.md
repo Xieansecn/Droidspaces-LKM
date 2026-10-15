@@ -150,20 +150,28 @@ kallsyms 对照：
 
 
 
-## 4. 外部检索：主流做法与本仓库路线的取舍
+## 4. 外部检索：先例、主流做法与本仓库路线的取舍
+
+### 4.1 同类先例（都是 LKM 路线，不是新发明）
+
+| 项目 | 做法 | 对本项目的价值 |
+| --- | --- | --- |
+| [`cyanmint/lkm4ctr`](https://github.com/cyanmint/lkm4ctr) | 单个 arm64 GKI 模块把 namespace + SysV IPC + POSIX mqueue + overlayfs 全部 vendor 进来并挂钩系统调用；**其 `ipc/` 源码取自 ACK `android14-6.1`（6.1.124）**，也就是本项目的同一条 6.1→LKM 路线 | 最直接的对照实现；[`docs/en/developer/VENDOR_KERNEL.md`](https://github.com/cyanmint/lkm4ctr/blob/master/docs/en/developer/VENDOR_KERNEL.md) 是检索到的最密集的踩坑文档 |
+| [`Dere3046/_patchHarmony`](https://github.com/Dere3046/_patchHarmony)（droid_lkm） | 三个模块给出 pid/ipc namespace（含 clone/clone3/setns 的 `CLONE_NEWPID/NEWIPC`）、SysV IPC、POSIX mqueue、`/proc/<pid>/ns/*`、`NSpid` 等，明确声明「不移动任何一个结构体成员，prebuilt 厂商模块继续可用」 | 与本项目目标一致；Droidspaces 维护者在 [issue #354](https://github.com/ravindu644/Droidspaces-OSS/issues/354) 里称其「approach works without any issues，需求检查全绿、容器能起」 |
+| [`Dere3046/KallRecon`](https://github.com/Dere3046/KallRecon) | 从内核镜像内存重建 kallsyms 表以在 LKM 内拿到符号地址 | 本仓库 `vendor/kallrecon` 已内置，且真机探针已验证可用 |
+| 官方/社区的另一条路：[`Goldzxcbug/Droidspaces_Kernel_patch`](https://github.com/Goldzxcbug/Droidspaces_Kernel_patch) | 按 KMI 发布 kABI padding 补丁（`GKI/6.1/GKI-6.1-sysvipc_kabi_6_7_8.patch` 等），改内核后重刷；槽位需按机型试 `1_2_3`/`3_4_5`/`5_6_7`，否则 bootloop | 与本项目互斥的备选方案，本项目选它不选的原因见 4.2 |
+
+Droidspaces 官方对 LKM 的态度也变了：[issue #97](https://github.com/ravindu644/Droidspaces-OSS/issues/97)（2026-05）里维护者称「技术上不可能，模块补不了这些基础数据结构」，五个月后的 #354 则给出可用的模块先例；但**至今没有官方 opt-in 去识别模块提供的 namespace**，这属于产品侧风险。
+
+### 4.2 与本项目路线的取舍
 
 Droidspaces 官方文档（[Kernel-Configuration.md](https://github.com/ravindu644/Droidspaces-OSS/blob/main/Documentation/Kernel-Configuration.md)）
 列出容器所需的全部选项，并明确写下 GKI 上的结论：`CONFIG_SYSVIPC`、
-`CONFIG_IPC_NS`、`CONFIG_POSIX_MQUEUE` **会给核心结构加字段、移动 ABI**，直接打开
-会让厂商 prebuilt 模块拒绝加载、设备 bootloop；因此他们的做法是给内核打
-kABI padding 补丁（把新字段塞进 ABI 已保留的填充位）后**重新编译并刷写内核**。
-同一文档还给出两条经验：
-
-- 「不要为了绕过校验而关闭 `CONFIG_MODVERSIONS` 或强载模块；结构确实变了。」
-- `CONFIG_CFS_BANDWIDTH` / `CONFIG_CGROUP_PIDS` 会改变调度器与 cgroup 结构，
-  没有 padding 补丁覆盖，只能连带重编所有厂商模块。
-
-对照到本设备：
+`CONFIG_IPC_NS`、`CONFIG_POSIX_MQUEUE` **会给核心结构加字段、移动 ABI**，直接打开会让
+厂商 prebuilt 模块拒绝加载、设备 bootloop；因此官方做法是给内核打 kABI padding 补丁
+后重新编译并刷写内核。同一文档还强调「不要为了绕过校验而关闭 `CONFIG_MODVERSIONS`
+或强载模块；结构确实变了」，以及 `CONFIG_CFS_BANDWIDTH`/`CONFIG_CGROUP_PIDS` 会改变
+调度器与 cgroup 结构、没有 padding 覆盖。
 
 | 需求 | 官方路线（改内核重刷） | 本仓库 LKM 路线 |
 | --- | --- | --- |
@@ -173,9 +181,45 @@ kABI padding 补丁（把新字段塞进 ABI 已保留的填充位）后**重新
 | user namespace 沙箱 | 打开 `CONFIG_USER_NS` | 需要单独的 userns 移植（M4） |
 | `--cpus` / `--pids-limit` | 需 `CONFIG_CFS_BANDWIDTH`/`CONFIG_CGROUP_PIDS`，官方也标注为破坏 ABI、默认不推荐 | 本设备两者皆无，本次不覆盖，属于已知功能缺失 |
 
-这个对照说明两件事：本仓库的 LKM 路线在「不改布局」这一维度上比官方路线更保守
-（也是它能免刷机的前提）；代价是 IPC/mqueue/devtmpfs/userns 必须由模块实现，
-并且 `--cpus`/`--pids-limit` 这类依赖调度器与 cgroup 布局的能力无法提供。
+### 4.3 社区经验中真正影响本次移植的几条
+
+- **ksud 的加载机制**：它把模块里每一个 `SHN_UNDEF` 符号改写成 `SHN_ABS` 并填入
+  `/proc/kallsyms` 里的地址（期间临时放宽 `kptr_restrict`），失败后再按内核报的
+  `version magic` 改写 `.modinfo` 并重试。因为内核 `simplify_symbols()` 对
+  `SHN_ABS` 直接跳过，**逐符号的 `CONFIG_MODVERSIONS` CRC 校验实际上被绕过**，真正的
+  门槛变成「名字在 `/proc/kallsyms` 里存在」；但 `check_modstruct_version()` 与
+  vermagic 仍然生效。这解释了 8 个缺失符号为何是硬失败，也解释了本项目为何能使用
+  非导出符号。
+- **slab 缓存归属**：模块自建的 `pid_namespace`/`uts_namespace`/`user_namespace`
+  必须用模块自己的 `kmem_cache` 分配与释放；而 `nsproxy` 是 `obj-y`，真实
+  `free_nsproxy()` 永远存在，混用会在别的路径上触发 SLUB 「wrong slab cache」。
+  本仓库既有端口已经这么做了（见 4.4）。
+- **`CONFIG_PID_NS=n` 的 `BUG()`**：`zap_pid_ns_processes()` 在关闭时被编译成内联
+  `BUG()`，而 `kernel/exit.c` 在该 namespace 的 `child_reaper` 退出时会调用它。
+- **CFI 要按对象处理**：设备是 KCFI（见 6.2 节实测）。若把「内核会回调进模块」的函数
+  （kprobe handler、`proc_ns_operations`、`file_system_type.init_fs_context`、
+  `file_operations`、`work_struct` 回调）的 CFI 关掉，内核侧检查会失败并 panic
+  （社区实测 `CFI failure at alloc_fs_context (target: mqueue_init_fs_context)`、
+  `… at process_one_work (target: free_ipc)`）；反之只有「调用运行时解析指针」的目标
+  文件才应关 CFI。
+- **`/dev/mqueue`**：必须用真实名字 `"mqueue"` 注册文件系统（否则 runc/containerd 的
+  `mount -t mqueue` 找不到），`register_filesystem()` 返回 `-EBUSY` 时要降级而不是
+  失败；模块是开机后 `post-fs-data` 阶段才加载的，`/dev/mqueue` 需要模块自己挂载。
+- **不要往 `task_struct` 加状态**：`sysvsem`/`sysvshm` 在 `SYSVIPC=n` 上不存在，模块用
+  自己的按 task 侧表；本仓库 `docs/port-status.md` 也是同一纪律。
+
+### 4.4 这些风险在既有端口中是否已解决（已核对代码）
+
+`src/port61` 与其它自持端口共享的那套机制已经覆盖了社区报告的主要坑：
+
+| 坑 | 既有端口里的处理 |
+| --- | --- |
+| `PID_NS=n` 的 `zap_pid_ns_processes()` 内联 `BUG()` | `names.h:8` 把 `zap_pid_ns_processes` 改名为 `ds_zap_pid_ns_processes`，`pid.c:173` 给出实现，`hooks.c:166` 挂钩 `do_exit` |
+| `free_nsproxy()` 永远存在、缓存归属 | `hooks.c:170` 挂钩 `free_nsproxy`（`names.h:17`），nsproxy 沿用内核 `nsproxy_cachep`；`pid.c:481` 为 pid namespace 自建 `ds_pid_namespace` 缓存 |
+| 文本改写与 ftrace/`text_poke` 缺失 | 设备没有 `text_poke`/`register_ftrace_function`，模块也不用：只导入 `set_memory_rw` 并自行改写 `sys_call_table` |
+| 设备侧符号可用性 | 13 个 path/fs_context 符号、19 个 mqueue VFS 符号、`kern_mount/kern_unmount`、`register_filesystem` 全部存在（`CONFIG_TRIM_UNUSED_KSYMS` 那类缺失在本设备**不适用**） |
+| mqueue 相关 | **未继承**：`"mqueue"` 真实名注册、`-EBUSY` 降级、主动挂载 `/dev/mqueue` 是本项目 M1/M3 的新增项 |
+
 
 ## 5. 验证计划（按里程碑）
 
@@ -211,14 +255,16 @@ note: did you mean '__register_sysctl_table'?   (include/linux/sysctl.h:221)
 
 | 风险 | 说明 | 缓解 |
 | --- | --- | --- |
-| 6.6→6.1 API 适配 | `mqueue.c`/`mq_sysctl.c` 是 6.6 文本；已确认至少 `src/port66/ipc.c:195` 的 `mnt_make_shortterm()`（6.8 API）在 6.1 与设备上都不存在；sysctl 注册风格、`ctl_table`、挂载/`fs_context`、percpu 计数等需按上游 6.1 `ipc/mqueue.c` 核对 | M1 的编译循环 + 以 `mode=reference` 的三份导入符号表为基线；本文件第 3 节差异表为起点 |
+| 5.15→6.1 API 适配 | `mqueue.c`/`mq_sysctl.c` 取自 5.15；M0 实测只到 `mq_register_sysctl_table()`（6.1 已删除）就编译失败，后面还可能有 `ctl_table`/挂载/percpu 计数的差异；6.6 侧则确认 `mnt_make_shortterm()`（6.8 API）不可用 | M1 的编译循环 + 以 `mode=reference` 的三份导入符号表为基线；第 3.2 节差异表为起点 |
 | 符号重名 | 模块自持的 `mq_init_ns`/`mq_clear_sbinfo`/`mq_put_mnt` 在「自带原生 mqueue 的 DDK 内核」里同名；`names.h` 目前只重命名 `init_ipc_ns`/`mq_lock` | M1 用 `llvm-nm` 检查重复定义；必要时把这几个也改成 `ds_` 前缀 |
 | 测试内核代表性 | 见 M2 | M2 必须完成，否则 VM 通过不代表设备可用 |
-| CFI / SCS / BTI | 设备 `CONFIG_CFI_CLANG=y`、`CONFIG_ARM64_BTI=y`、`CONFIG_SHADOW_CALL_STACK=y`；kallsyms 里只有 KCFI 运行时（`cfi_handler`/`report_cfi_failure`/`cfi_break_hook`），没有 `cfi_jt`/`__cfi_` | 与 `src/port61/hooks.c` 的 KCFI 匹配逻辑一致（5.15 端口的 classic `.cfi_jt` 路线不适用）；`activate=1` 仍需真机确认 |
-| 分配器/内联差异 | 若照抄上游 6.1 的 `alloc_inode_sb()` 会引入设备不存在的符号 | 已把这类符号加入门禁拒绝清单（见 3.3 节） |
-| 同一 KMI 的载荷选择 | `android14-6.1` 现指向 `src/port61`，而这个厂商画像同样匹配该 KMI | 安装器需按运行时能力（原生 `init_ipc_ns`/`mq_lock` 是否存在）而非 KMI 选择载荷；记在 `open_decisions` |
+| CFI 按对象处理 | 设备是 KCFI（见 `device-profiles` 的 `cfi_implementation`）。社区实测：把「内核会回调进模块」的函数关掉 CFI 会导致内核侧 `CFI failure at alloc_fs_context (target: mqueue_init_fs_context)`、`… at process_one_work (target: free_ipc)` 而 panic；只有「调用运行时解析指针」的目标文件才可关 CFI | M1 逐文件设置：`mqueue_init_fs_context`/`file_operations`/`proc_ns_operations`/`work_struct` 回调保留 CFI，必要时只对单个函数 `__nocfi`；`activate=1` 真机确认 |
+| 社区已报的 PID/slab 坑 | `PID_NS=n` 时 `zap_pid_ns_processes()` 是内联 `BUG()`；`free_nsproxy()` 永远存在，混用缓存会 SLUB 崩 | 既有端口已解决（4.4 节逐条对照），本项目继承并复核 |
+| `/dev/mqueue` | 模块加载晚于 init，`/dev/mqueue` 需要模块自己挂；文件系统必须用真实名 `"mqueue"` 注册，`-EBUSY` 要降级 | 列入 M1/M3 验收项 |
+| 分配器/内联差异 | 照抄上游 6.1 的 `alloc_inode_sb()` 会引入设备不存在的符号 | 已加入门禁拒绝清单（3.3 节） |
+| 同一 KMI 的载荷选择 | `android14-6.1` 现指向 `src/port61`，而这个厂商画像同样匹配该 KMI | 安装器需按运行时能力（原生 `init_ipc_ns`/`mq_lock` 是否存在）而非 KMI 选择载荷；见 `open_decisions` |
+| 产品侧 opt-in | Droidspaces 的检查走运行时探测，但官方至今没有正式承认「模块提供的 namespace」（issue #354 仍开着） | 本项目的目标是让检查自然通过；是否需要上游配合记在 `open_decisions` |
 | 真机风险 | 模块激活后挂钩核心路径，激活状态下拒绝热卸载 | 未持久化安装，重启即恢复；先在 M2 内核上跑回归 |
-| 未检索到的先例 | 尚未找到「LKM 自带 POSIX mqueue 后端」的外部先例；本仓库的 port515/66/6.12/6.18 是目前最直接的实现参考 | 继续跟踪上游与社区（见下方待办） |
 
 ## 7. 参考文献
 
@@ -234,3 +280,18 @@ note: did you mean '__register_sysctl_table'?   (include/linux/sysctl.h:221)
   `init/Kconfig`、`arch/arm64/configs/gki_defconfig`），见第 3.2 节结论
 - 本仓库内的自持后端参考：`src/port515/{ipc.c,mqueue.c,mq_sysctl.c}`（主模板）、
   `src/port66/`、`src/port/`、`src/port618/`
+- 同类先例：[lkm4ctr](https://github.com/cyanmint/lkm4ctr)（内含取自 ACK
+  `android14-6.1` 的 `ipc/` 源码，以及
+  [VENDOR_KERNEL.md](https://github.com/cyanmint/lkm4ctr/blob/master/docs/en/developer/VENDOR_KERNEL.md)）、
+  [_patchHarmony](https://github.com/Dere3046/_patchHarmony)、
+  [KallRecon](https://github.com/Dere3046/KallRecon)
+- Droidspaces 侧态度变化与产品缺口：
+  [issue #97](https://github.com/ravindu644/Droidspaces-OSS/issues/97)、
+  [issue #354](https://github.com/ravindu644/Droidspaces-OSS/issues/354)
+- KernelSU 加载机制（`SHN_UNDEF` → `SHN_ABS` 重定位、vermagic 改写重试）：
+  [userspace/ksuinit/src/lib.rs](https://github.com/tiann/KernelSU/blob/main/userspace/ksuinit/src/lib.rs)、
+  [userspace/ksud/src/debug.rs](https://github.com/tiann/KernelSU/blob/main/userspace/ksud/src/debug.rs)
+- AOSP 安全特性：[KCFI](https://source.android.com/docs/security/test/kcfi)、
+  [ShadowCallStack](https://source.android.com/docs/security/test/shadow-call-stack)
+- 备选路线（改内核重刷 + kABI padding）：
+  [Goldzxcbug/Droidspaces_Kernel_patch](https://github.com/Goldzxcbug/Droidspaces_Kernel_patch)

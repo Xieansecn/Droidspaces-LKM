@@ -198,8 +198,78 @@
     "register_sysctl_sz",
     "__percpu_counter_init_many",
     "percpu_counter_destroy_many",
-    "PDE_DATA"
+    "PDE_DATA",
+    "text_poke",
+    "register_ftrace_function",
+    "unregister_ftrace_function",
+    "zap_pid_ns_processes",
+    "pid_ns_cachep",
+    "user_ns_cachep"
   ],
   "allocator_note": "the 6.1 DDK headers inline kmem_cache_alloc()/kmalloc() to kmem_cache_alloc and __kmalloc, which the device has, while kmem_cache_alloc_trace and __kmalloc_track_caller are absent; upstream 6.1 ipc/mqueue.c uses alloc_inode_sb(), which the device does not have either, so the module keeps the 5.15 kmem_cache_alloc() form",
-  "loader_note": "export status is irrelevant here: ksud relocates non-exported symbols by name from kallsyms. The already built 6.1 module imports __register_sysctl_table and proc_alloc_inum/proc_free_inum, none of which are EXPORT_SYMBOL'd"
+  "loader_note": "export status is irrelevant here: ksud relocates non-exported symbols by name from kallsyms. The already built 6.1 module imports __register_sysctl_table and proc_alloc_inum/proc_free_inum, none of which are EXPORT_SYMBOL'd",
+  "present_symbols_verified_for_the_mqueue_backend": {
+    "note": "checked against the /proc/kallsyms dump of this device; the CONFIG_TRIM_UNUSED_KSYMS hazards reported for newer KMIs do not apply here",
+    "path_and_fs_context": [
+      "lookup_one_len",
+      "lookup_one",
+      "fs_context_for_mount",
+      "fc_mount",
+      "put_fs_context",
+      "get_tree_nodev",
+      "get_tree_keyed",
+      "kill_litter_super",
+      "simple_lookup",
+      "dentry_open",
+      "getname",
+      "putname",
+      "alloc_fs_context"
+    ],
+    "mqueue_vfs": [
+      "mnt_want_write",
+      "mnt_drop_write",
+      "fd_install",
+      "get_unused_fd_flags",
+      "put_unused_fd",
+      "inode_permission",
+      "vfs_unlink",
+      "vfs_mkobj",
+      "d_instantiate",
+      "d_make_root",
+      "iget_locked",
+      "unlock_new_inode",
+      "init_special_inode",
+      "simple_dir_operations",
+      "simple_read_from_buffer",
+      "simple_statfs",
+      "default_llseek",
+      "get_next_ino",
+      "clear_inode"
+    ],
+    "hooks_and_text": [
+      "register_kprobe",
+      "unregister_kprobe",
+      "set_memory_rw"
+    ],
+    "namespace_plumbing": [
+      "free_nsproxy",
+      "nsproxy_cachep",
+      "uts_ns_cache",
+      "kern_mount",
+      "kern_unmount",
+      "register_filesystem",
+      "unregister_filesystem"
+    ]
+  },
+  "inline_helpers_not_symbols": {
+    "note": "absent from kallsyms because they are static inlines in headers; they can never appear as module imports",
+    "names": [
+      "task_tgid_vnr",
+      "ns_of_pid",
+      "percpu_counter_init",
+      "percpu_counter_sub",
+      "ns_alloc_inum",
+      "ns_free_inum"
+    ]
+  }
 }

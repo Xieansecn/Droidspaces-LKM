@@ -190,11 +190,43 @@
   "open_decisions": [
     "payload selection: KMI android14-6.1 currently resolves to src/port61 for the GKI baseline and would also match this vendor profile; the installer has to pick by runtime capability check rather than by KMI alone",
     "mqueue sysctl style: one global table (src/port515) versus a per-namespace ctl_table_set (src/port61 style)",
-    "whether the module-owned mq_init_ns/mq_clear_sbinfo/mq_put_mnt need ds_ renames to avoid clashing with a kernel that still has native POSIX mqueue (the DDK kernel does)"
+    "whether the module-owned mq_init_ns/mq_clear_sbinfo/mq_put_mnt need ds_ renames to avoid clashing with a kernel that still has native POSIX mqueue (the DDK kernel does)",
+    "mqueue filesystem registration: use the real name \"mqueue\" so unmodified runc/containerd mount it, degrade on -EBUSY, and mount /dev/mqueue from the module because it loads after init already tried",
+    "CFI per object: keep CFI on any function the kernel calls back into (file_system_type.init_fs_context, file_operations, proc_ns_operations, kprobe handler, work_struct callbacks) and only drop it for objects that call runtime-resolved pointers",
+    "Droidspaces has no official opt-in for module-provided namespaces (issues #97 and #354): decide whether to rely on the runtime probes alone or to coordinate upstream"
   ],
   "m0_evidence": {
     "target_run": "https://github.com/Xieansecn/Droidspaces-LKM/actions/runs/38723856630",
     "result": "one compile error: mq_register_sysctl_table undeclared in 6.1 (mqueue.c:1735); gate then reports the blocking imports",
     "reference_run": "https://github.com/Xieansecn/Droidspaces-LKM/actions/runs/38722274158"
+  },
+  "prior_art": [
+    {
+      "project": "cyanmint/lkm4ctr",
+      "url": "https://github.com/cyanmint/lkm4ctr",
+      "why": "vendors the ACK android14-6.1 ipc/ sources (6.1.124) into one arm64 GKI module, i.e. the same 6.1-to-LKM port; its docs/en/developer/VENDOR_KERNEL.md is the richest pitfalls source (slab cache ownership, /proc/ns and stat fabrication for runc/containerd, mqueue fs under the real name, proactive /dev/mqueue mount)"
+    },
+    {
+      "project": "Dere3046/_patchHarmony (droid_lkm)",
+      "url": "https://github.com/Dere3046/_patchHarmony",
+      "why": "independent module providing pid/ipc namespaces, SysV IPC and POSIX mqueue on GKI 6.12/6.6 without moving a struct member; the Droidspaces maintainer points at it as working in issue #354"
+    },
+    {
+      "project": "KallRecon / KMSDK (Dere3046)",
+      "url": "https://github.com/Dere3046/KallRecon",
+      "why": "the kallsyms reconstruction library this repository already vendors (vendor/kallrecon)"
+    },
+    {
+      "project": "Droidspaces kernel-config guide and its issue tracker",
+      "url": "https://github.com/ravindu644/Droidspaces-OSS/blob/main/Documentation/Kernel-Configuration.md",
+      "why": "lists what the runtime probes; issue #97 first called a module impossible, issue #354 shows module-provided namespaces passing the checker, but there is still no official opt-in"
+    }
+  ],
+  "inherited_hazards_already_handled": {
+    "note": "the PID_NS=n hazards reported by the community are already solved in the shared port code; the IPC port inherits the solutions",
+    "pid_ns_bug": "names.h renames zap_pid_ns_processes to ds_zap_pid_ns_processes, pid.c:173 implements it, and hooks.c:166 hooks do_exit, so the kernel never runs the inline BUG() clone",
+    "slab_cache_ownership": "pid.c:481 creates its own ds_pid_namespace kmem_cache and frees with it; nsproxy keeps using nsproxy_cachep but hooks.c:170 hooks free_nsproxy so every free goes through module code",
+    "text_patching": "no ftrace and no text_poke: the module imports set_memory_rw and patches sys_call_table itself",
+    "mqueue_gap": "not inherited: the new backend must register the filesystem under the real name \"mqueue\", tolerate -EBUSY, and mount /dev/mqueue itself because the module is loaded after init already tried"
   }
 }
